@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createTestHarness, parseToolResult, type TestHarness } from '@chrischall/mcp-utils/test';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { HelloFreshClient, type ClientSession } from '../src/client.js';
-import { registerWriteTools } from '../src/tools/writes.js';
+import { registerWriteTools } from '../src/tools/writes/index.js';
 import { sleepMs } from '../src/tools/shared.js';
 import type { ToolDeps } from '../src/tools/index.js';
 import { offlineDeps } from './helpers.js';
@@ -697,6 +697,38 @@ describe('hf_change_plan_size', () => {
       });
       const preview = parseToolResult<Any>(await t.call('hf_change_plan_size', toPlan));
       expect(preview.preview.overriddenWeeks).toBeUndefined();
+    });
+
+    it('an override already at the new plan size is not said to revert: the preview lists it apart, and why', async () => {
+      // Plan 2×6 → 2×2: W49 is already a one-week 2×2 (unchanged by the plan change); W51 is a one-week 2×4 (reverts).
+      const mixed = { items: [sized(W49, 'US-CBU-2-2-0'), sized(W51, 'US-CBU-2-4-0')] };
+      const t = await setup({
+        routes: [['GET', /\/api\/customers\/me\/deliveries$/, mixed]],
+        after: [
+          ['GET', /\/api\/plans$/, [{ ...PLANS[0], planItems: [{ productHandle: 'US-CBU-2-2-0' }] }]],
+          ['GET', /\/api\/customers\/me\/deliveries$/, { items: [sized(W49, 'US-CBU-2-2-0'), sized(W51, 'US-CBU-2-2-0')] }],
+        ],
+      });
+      const { preview, out } = await t.twoPhase('hf_change_plan_size', { meals: 2, people: 2 });
+      expect(preview.preview.overriddenWeeks).toEqual([{ week: '2026-W51', sku: 'US-CBU-2-4-0', revertsTo: 'US-CBU-2-2-0' }]);
+      expect(preview.preview.warning).not.toMatch(/2026-W49/);
+      expect(preview.preview.alreadyAtNewSize).toEqual([{ week: '2026-W49', sku: 'US-CBU-2-2-0' }]);
+      expect(preview.preview.alreadyAtNewSizeNote).toMatch(/2026-W49.*already.*US-CBU-2-2-0.*unchanged/);
+      expect(out.overridesReverted).toEqual([{ week: '2026-W51', from: 'US-CBU-2-4-0', to: 'US-CBU-2-2-0' }]);
+      expect(out.overridesNote).not.toMatch(/2026-W49/);
+    });
+
+    it('when every override is already at the new plan size, nothing is said to revert and nothing is re-read', async () => {
+      const t = await setup({
+        routes: [['GET', /\/api\/customers\/me\/deliveries$/, { items: [sized(W49, 'US-CBU-2-2-0')] }]],
+        after: [['GET', /\/api\/plans$/, [{ ...PLANS[0], planItems: [{ productHandle: 'US-CBU-2-2-0' }] }]]],
+      });
+      const { preview, out } = await t.twoPhase('hf_change_plan_size', { meals: 2, people: 2 });
+      expect(preview.preview.overriddenWeeks).toBeUndefined();
+      expect(preview.preview.warning).toBeUndefined();
+      expect(preview.preview.alreadyAtNewSize).toEqual([{ week: '2026-W49', sku: 'US-CBU-2-2-0' }]);
+      expect(out.status).toBe('verified');
+      expect(out).not.toHaveProperty('overridesNote');
     });
 
     it('after execute, reports which overridden weeks reverted (and which kept their size)', async () => {

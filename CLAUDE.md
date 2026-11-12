@@ -2,8 +2,10 @@
 
 Unofficial HelloFresh (US) MCP (`@chrischall/hellofresh-mcp`): subscription,
 delivery weeks, menus and meal picks, plus confirm-gated writes (pick meals,
-one-week size / delivery day, skip / unskip, permanent plan size and schedule)
-and three read-only planner tools (profiles, suggest, weekly plan). stdio
+one-week size / delivery day, skip / unskip, permanent plan size and schedule,
+favourite / un-favourite a recipe), favourites and ratings reads, cooking-day
+reads (recipe detail, cook order), and four read-only planner tools
+(profiles, suggest, weekly plan, multi-week plan). stdio
 transport, tool prefix `hf_`.
 
 ## Commands
@@ -19,7 +21,11 @@ npm run test:coverage  # 100% thresholds, run by CI
 - The bridge (serverName `hellofresh-mcp`, port `HELLOFRESH_WS_PORT`, default
   37149) is used ONLY to read the `apiV2Auth` cookie on `www.hellofresh.com`
   and to write a refreshed token set back to it. Every API call is plain Node
-  `fetch` to `https://www.hellofresh.com/gw` with `Authorization: Bearer`.
+  `fetch` to `https://www.hellofresh.com/gw` with `Authorization: Bearer` —
+  except `POST /gw/calculate` (the real box price), which Cloudflare refuses
+  from Node: it runs as an in-tab fetch (`bridge.fetchInTab`, the `fetch`
+  capability already in the pairing scope) with the same bearer. Its answer
+  carries ids and the address: project to money fields only.
 - The refresh token ROTATES on every `POST /gw/refresh` and the response sets
   no cookie: a Node-side refresh MUST be written back (js-cookie v3 encoding,
   `encodeAuthCookie` in `src/session.ts`) or the browser is signed out. The
@@ -38,10 +44,20 @@ npm run test:coverage  # 100% thresholds, run by CI
   A new tool also needs a `manifest.json` `tools` entry, a README row, a line
   in `skills/hellofresh/SKILL.md` and an intent in `tests/hints.test.ts` (all
   tested), and `tests/server-boot.test.ts` `MIN_TOOLS` raised.
-- `src/tools/writes.ts` — every write is plan → `confirmWrite` → execute →
+- `src/tools/writes/` (`shared.ts` gate + checks, `week.ts`, `plan.ts`) — every write is plan → `confirmWrite` → execute →
   re-read, answering `status: verified | unverified`. Its own `registerGated`
   wraps the flow because `registerWrite` cannot carry `_meta`.
-- `src/planner.ts` — pure scoring for `hf_suggest_meals` / `hf_weekly_plan`,
+- `src/tools/favorites.ts` — favourites (list + confirm-gated add/remove,
+  verified by re-reading the list) and the ratings list. The planner reads both
+  best effort (`readPersonal` in `src/tools/shared.ts`).
+- `src/cooking.ts` + `src/tools/cooking.ts` — `hf_get_recipe` /
+  `hf_cooking_plan`: a pure recipe projection and cook-order ranking, and the
+  read-only tools (recipe text is third-party: answered as untrusted content).
+- `src/tools/promo.ts` — `hf_promo_status`: the voucher's boxes used/left and each
+  running week's real discount from the calculator (bounded by `PRICE_CONCURRENCY`),
+  with warnings. Read-only.
+- `src/planner.ts` — pure scoring for `hf_suggest_meals` / `hf_weekly_plan`
+  (and `hf_plan_weeks`, which runs the weekly plan per week in `src/tools/planner.ts`),
   driven by a planner profile (`src/profiles.ts`: `HELLOFRESH_PROFILES` →
   `HELLOFRESH_PROFILES_FILE` → built-in `couple` / `family`, parsed once, a bad
   config is a tool error). No household-specific rules belong in the repo:
@@ -62,6 +78,10 @@ npm run test:coverage  # 100% thresholds, run by CI
   value captured from a live session before committing. Recipes on the menu
   fixture are public and fine.
 - Out of scope, by decision: cancelling the subscription (irreversible — the
-  website only), the meal-preference preset (the API refuses it), add-ons.
+  website only), the meal-preference preset (the API refuses it), add-ons, and
+  RATING a recipe: the rate call (`PUT /cfs/{v2|v3}/ratings/recipe/{id}`) is not
+  live-verified — it needs a delivered box — so only the ratings LIST is read
+  (`hf_list_ratings`, item shape unobserved: parsed defensively). Add the write
+  only after it is verified in docs/HELLOFRESH-API.md.
 - US market only (`country=US`, `locale=en-US`).
 - Tests make no network calls.

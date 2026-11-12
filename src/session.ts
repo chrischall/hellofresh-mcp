@@ -14,6 +14,20 @@
 //     surfaces WRITE_BACK_WARNING.
 //  4. A 401 from any call invalidates the token, re-runs the lifecycle once
 //     (never trusting the rejected token again) and retries the call once.
+//  5. When the browser cookie read FAILS (bridge down, tab closed, pairing
+//     pending) but the newest set this process knows is one it refreshed
+//     itself, it may stand in — how far depends on its write-back:
+//     - the write-back FAILED: the browser never received that refresh token,
+//       so only this process can have spent it. While it has not expired it
+//       is used, refreshed (and written back) as in 3 when stale.
+//     - the write-back SUCCEEDED: the browser holds that refresh token and
+//       may already have rotated it (POSTing a spent one can sign the browser
+//       out). Only its ACCESS token is used, while still valid (and not
+//       rejected); otherwise the original bridge error is rethrown, its
+//       pairing hint intact. /gw/refresh is never called.
+//     A set read from the browser is never a fallback: its refresh token may
+//     already be spent by the browser. A missing cookie (signed out) is NOT a
+//     read failure and still fails.
 //
 // No token value is ever logged, put in an error message or returned.
 
@@ -195,6 +209,10 @@ export class HelloFreshSession implements ReactiveTokenSource {
   /** An access token the API rejected: never trusted again, even if the cookie still holds it. */
   private rejected: string | undefined;
   private writeBackWarning: string | undefined;
+  /** The refresh token of this process's own latest refresh (the fallback when the cookie read fails). */
+  private ownRefreshToken: string | undefined;
+  /** Whether that refresh was written back to the browser (which may then rotate it on its own). */
+  private ownWrittenBack = false;
   private readonly seen: string[] = [];
 
   constructor(private readonly opts: HelloFreshSessionOptions) {
@@ -265,8 +283,27 @@ export class HelloFreshSession implements ReactiveTokenSource {
     return set.access_token !== this.rejected && tokenExpiresAtMs(set) - this.now() > EXPIRY_SKEW_MS;
   }
 
-  private async lifecycle(): Promise<AuthTokenSet> {
-    const raw = await this.bridged(() => this.opts.bridge.readAuthCookie());
+  /** Whether `set`'s refresh token is still usable: its stated lifetime has not run out (unstated = try it). */
+  private refreshable(set: AuthTokenSet): boolean {
+    if (typeof set.refresh_expires_in !== 'number') return true;
+    return (set.issued_at + set.refresh_expires_in) * 1000 > this.now();
+  }
+
+  /** The newest token set: the browser cookie's or our own (lifecycle steps 2 and 5). */
+  private async newestSet(): Promise<AuthTokenSet> {
+    let raw: string | undefined;
+    try {
+      raw = await this.bridged(() => this.opts.bridge.readAuthCookie());
+    } catch (err) {
+      const ours = this.latest;
+      if (!ours || ours.refresh_token !== this.ownRefreshToken) throw err;
+      // Written back: the browser may have rotated (spent) its refresh token — use the access token only.
+      if (this.ownWrittenBack ? !this.fresh(ours) : !this.refreshable(ours)) throw err;
+      console.error(
+        `[hellofresh-mcp] could not read the browser session (${truncateErrorMessage(this.redact(messageOf(err)), 200)}); using this process's own refreshed session`,
+      );
+      return ours;
+    }
     if (!raw) throw new HelloFreshSessionError(`no ${AUTH_COOKIE} cookie was found on www.hellofresh.com`);
     const browser = decodeAuthCookie(raw);
     this.remember(browser);
@@ -275,9 +312,12 @@ export class HelloFreshSession implements ReactiveTokenSource {
     // then the cookie's refresh token is already spent and ours must be used.
     const ours = this.latest;
     const browserIsNewest = !ours || browser.issued_at >= ours.issued_at;
-    const newest = browserIsNewest ? browser : ours;
     if (browserIsNewest) this.writeBackWarning = undefined;
+    return browserIsNewest ? browser : ours;
+  }
 
+  private async lifecycle(): Promise<AuthTokenSet> {
+    const newest = await this.newestSet();
     if (this.fresh(newest)) {
       this.latest = newest;
       return newest;
@@ -285,9 +325,12 @@ export class HelloFreshSession implements ReactiveTokenSource {
 
     const next = await this.refresh(newest);
     this.latest = next;
+    this.ownRefreshToken = next.refresh_token;
+    this.ownWrittenBack = false;
     this.remember(next);
     try {
       await this.opts.bridge.writeAuthCookie(encodeAuthCookie(next));
+      this.ownWrittenBack = true;
       this.writeBackWarning = undefined;
     } catch (err) {
       this.writeBackWarning = WRITE_BACK_WARNING;

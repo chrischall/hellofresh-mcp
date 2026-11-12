@@ -34,6 +34,7 @@
       ],
       "env": {
         "HELLOFRESH_WS_PORT": "${user_config.hellofresh_ws_port}",
+        "MCP_USER_TZ": "${user_config.user_tz}",
         "MCP_CONFIRM_MODE": "${user_config.confirm_mode}",
         "MCP_CONFIRM_ELICITATION": "${user_config.confirm_elicitation}",
         "HELLOFRESH_DEBUG": "${user_config.debug}",
@@ -47,6 +48,12 @@
       "type": "number",
       "title": "Bridge port",
       "description": "The fetchproxy bridge port. The whole fetchproxy fleet and ContextMint Bridge share `37149`; override only for local testing (or when a host injects a per-registration port). Defaults to 37149.",
+      "required": false
+    },
+    "user_tz": {
+      "type": "string",
+      "title": "Time zone (optional)",
+      "description": "Optional. Your IANA time zone, for example America/New_York. It decides \"this week\" in hf_recent_picks. Leave blank to use the system zone.",
       "required": false
     },
     "confirm_mode": {
@@ -92,11 +99,11 @@
     },
     {
       "name": "hf_list_deliveries",
-      "description": "List upcoming delivery weeks: dates, cutoff, status, box size and an estimated total with the voucher discount (brief view: one line per week)."
+      "description": "List upcoming delivery weeks: dates, cutoff, status, box size and each running week's box price — HelloFresh's checkout total plus premiums, or a labelled estimate (brief view: one line per week)."
     },
     {
       "name": "hf_get_delivery",
-      "description": "Read one delivery week: dates, status, box size, current meal picks, allowed actions, alternative days and an estimated total including premiums."
+      "description": "Read one delivery week: dates, status, box size, current meal picks, allowed actions, alternative days and the box price — HelloFresh's checkout total plus premiums, or a labelled estimate."
     },
     {
       "name": "hf_get_menu",
@@ -148,7 +155,39 @@
     },
     {
       "name": "hf_weekly_plan",
-      "description": "Plan a delivery week for a planner profile: box size needed, suggested picks, estimated total, approval summary and the follow-up writes; read-only."
+      "description": "Plan a delivery week for a planner profile: box size needed, suggested picks, box price, approval summary and the follow-up writes; read-only."
+    },
+    {
+      "name": "hf_plan_weeks",
+      "description": "Plan up to 6 delivery weeks at once, each for the profile the caller names: each week's plan, no recipe repeated across the weeks, a combined summary, the total of HelloFresh's prices and the follow-up writes per week; skipped weeks reported as skipped; read-only."
+    },
+    {
+      "name": "hf_get_recipe",
+      "description": "Read the full recipe for one meal on a week's menu (protein swaps included): time, difficulty, allergens, nutrition, ingredient amounts for the week's servings, steps, utensils and recipe card; read-only."
+    },
+    {
+      "name": "hf_cooking_plan",
+      "description": "Order a week's picked meals for cooking, most perishable first (fish, shellfish, ... vegetarian last), with a suggested day, why, time, key ingredients and recipe card; read-only."
+    },
+    {
+      "name": "hf_promo_status",
+      "description": "Track the voucher: coupon code, active, box limit, boxes used and left, each upcoming running week's real discount from HelloFresh's calculator, and warnings (no discount, percent change, inactive, few boxes left); read-only."
+    },
+    {
+      "name": "hf_list_favorites",
+      "description": "List the user's favourite recipes, named from a week's menu when given; read-only."
+    },
+    {
+      "name": "hf_list_ratings",
+      "description": "List the user's own recipe ratings (v2 / 5-star v3), parsed defensively; read-only."
+    },
+    {
+      "name": "hf_favorite_recipe",
+      "description": "Favourite a recipe from a week's menu; confirm-gated and verified."
+    },
+    {
+      "name": "hf_unfavorite_recipe",
+      "description": "Remove a recipe from the favourites; confirm-gated and verified."
     }
   ],
   "compatibility": {

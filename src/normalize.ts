@@ -6,8 +6,10 @@
 import type {
   RawDelivery,
   RawDeliveryMenu,
+  RawFavorites,
   RawMeal,
   RawModularity,
+  RawRatings,
   RawRecipe,
   RawSubscription,
   VoucherInfo,
@@ -165,6 +167,8 @@ export function projectDelivery(d: RawDelivery): ProjectedDelivery {
 
 export interface ProjectedVariant {
   index: number;
+  /** The swap's own recipe id (24-hex). */
+  recipeId?: string;
   /** The swap as the site names it, e.g. `2x Shrimp`. */
   title?: string;
   name?: string;
@@ -178,6 +182,8 @@ export interface ProjectedVariant {
 
 export interface ProjectedMeal {
   index: number;
+  /** `recipe.id` (24-hex): the key of the favourites and ratings endpoints. */
+  recipeId?: string;
   name?: string;
   headline?: string;
   category: string | null;
@@ -256,6 +262,7 @@ function projectVariant(
   const charge = premium(meal);
   return {
     index: variation.index,
+    ...(recipe.id ? { recipeId: recipe.id } : {}),
     title: variation.title,
     name: recipe.name,
     category,
@@ -276,6 +283,7 @@ function projectMeal(meal: RawMeal, variants: ProjectedVariant[]): ProjectedMeal
   const charge = premium(meal);
   return {
     index: meal.index,
+    ...(recipe.id ? { recipeId: recipe.id } : {}),
     name: recipe.name,
     headline: recipe.headline,
     category,
@@ -327,6 +335,56 @@ export function projectMenu(menu: RawDeliveryMenu): ProjectedMenu {
     }));
 
   return { week: menu.week, mealsReady: menu.mealsReady, meals: projected, selected };
+}
+
+// ---- favourites and ratings ----------------------------------------------------------
+
+export interface ProjectedFavorites {
+  total?: number;
+  favorites: Array<{ recipeId: string; favoritedAt?: string }>;
+}
+
+/** Recipe favourites as recipe id + date: the customer uuid each item carries is never kept. */
+export function projectFavorites(raw: RawFavorites): ProjectedFavorites {
+  const favorites = (raw.items ?? []).flatMap((f) =>
+    (f.object_type === undefined || f.object_type === 'recipe') && typeof f.object_id === 'string' && f.object_id
+      ? [{ recipeId: f.object_id, ...(f.created_at ? { favoritedAt: f.created_at } : {}) }]
+      : [],
+  );
+  return { ...(raw.total !== undefined ? { total: raw.total } : {}), favorites };
+}
+
+export type RatingScaleName = 'v2' | 'v3';
+
+export interface ProjectedRating {
+  recipeId: string;
+  rating: number;
+  scale: RatingScaleName;
+  week?: string;
+}
+
+/**
+ * Recipe ratings, read DEFENSIVELY: the list's item shape has not been observed
+ * (docs/HELLOFRESH-API.md "Ratings"). An item counts when it carries the recipe
+ * id as `object_id` (the shape of the same service's favourites) and a numeric
+ * `rating` (the rate call's body field), plus `hellofresh_week` when present;
+ * anything else is skipped and counted, never guessed at.
+ */
+export function projectRatings(raw: RawRatings, scale: RatingScaleName): { ratings: ProjectedRating[]; skipped: number } {
+  let skipped = 0;
+  const ratings: ProjectedRating[] = [];
+  for (const item of raw.items ?? []) {
+    const r = typeof item === 'object' && item !== null ? (item as Record<string, unknown>) : {};
+    const recipeId = typeof r.object_id === 'string' && r.object_id ? r.object_id : undefined;
+    const rating = typeof r.rating === 'number' || typeof r.rating === 'string' ? Number(r.rating) : Number.NaN;
+    if (!recipeId || !Number.isFinite(rating)) {
+      skipped++;
+      continue;
+    }
+    const week = typeof r.hellofresh_week === 'string' ? r.hellofresh_week : undefined;
+    ratings.push({ recipeId, rating, scale, ...(week ? { week } : {}) });
+  }
+  return { ratings, skipped };
 }
 
 // ---- box total estimate ------------------------------------------------------------

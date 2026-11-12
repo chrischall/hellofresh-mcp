@@ -182,6 +182,7 @@ describe('env var docs', () => {
         'MCP_CONFIRM_ELICITATION',
         'HELLOFRESH_PROFILES',
         'HELLOFRESH_PROFILES_FILE',
+        'MCP_USER_TZ',
       ]),
     );
   });

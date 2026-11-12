@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { projectMenu, type ProjectedMeal, type ProjectedMenu } from '../src/normalize.js';
-import { dayLabel, dollars, suggestMeals, summaryText } from '../src/planner.js';
+import { projectMenu, type ProjectedMeal, type ProjectedMenu, type ProjectedVariant } from '../src/normalize.js';
+import { dayLabel, dollars, isDoubleProtein, suggestMeals, summaryText } from '../src/planner.js';
 import type { Profile } from '../src/profiles.js';
 import type { RawDeliveryMenu } from '../src/types.js';
 
@@ -284,6 +284,23 @@ describe('summary text', () => {
     ).toBe('Couple week (2 servings) — delivering Mon 12/7: A. Est. box total $1.00 (−$0.05).');
   });
 
+  it('a HelloFresh price wins over the estimate: its total with premiums, discount and coupon', () => {
+    const base = { profile: FAMILY, deliveryDate: '2026-11-30T00:00:00-05:00', picks, estimate: { totalCents: 1, discountCents: 1 } };
+    expect(
+      summaryText({ ...base, price: { grandTotal: 52.65, discount: 108.85, couponCode: 'EXAMPLE65', premiumUpcharge: 0, totalWithPremiums: 52.65 } }),
+    ).toMatch(/: Garlicky Shrimp Couscous Bowls \+ Pesto Salmon Linguine\. Box total \$52\.65 \(HelloFresh price; −\$108\.85 EXAMPLE65\)\.$/);
+    expect(
+      summaryText({ ...base, price: { grandTotal: 52.65, discount: 0, premiumUpcharge: 17.94, totalWithPremiums: 70.59 } }),
+    ).toMatch(/Box total \$70\.59 \(HelloFresh price \$52\.65 \+ \$17\.94 premiums; no discount\)\.$/);
+    expect(summaryText({ ...base, price: { grandTotal: 40, discount: 5, totalWithPremiums: 40 } })).toMatch(
+      /Box total \$40\.00 \(HelloFresh price; −\$5\.00\)\.$/,
+    );
+    // Premiums unknown (menu unread): HelloFresh's total alone, flagged.
+    expect(summaryText({ ...base, price: { grandTotal: 21.41 } })).toMatch(
+      /Box total \$21\.41 \(HelloFresh price, premiums not included; no discount\)\.$/,
+    );
+  });
+
   it('helpers', () => {
     expect(dollars(0)).toBe('$0.00');
     expect(dollars(14748)).toBe('$147.48');
@@ -405,5 +422,116 @@ describe('one dish per recipe (base course vs protein swap)', () => {
   it('without a category allowlist every base course stands for its recipe', () => {
     const base = meal({ index: 10, variants: [variant(11), variant(12, { category: 'Poultry', isSeafood: false, seafoodKind: null })] });
     expect(suggestMeals(menuOf(base), { profile: ANY }).ranked.map((c) => c.index)).toEqual([10]);
+  });
+});
+
+describe('favourites and ratings', () => {
+  const FAV = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+  const LOW = 'bbbbbbbbbbbbbbbbbbbbbbbb';
+  const OK = 'cccccccccccccccccccccccc';
+  const SWAP = 'dddddddddddddddddddddddd';
+  const menu = () =>
+    menuOf(
+      meal({ index: 1, recipeId: 'eeeeeeeeeeeeeeeeeeeeeeee', seafoodKind: 'fish' }),
+      meal({ index: 2, recipeId: FAV, seafoodKind: 'fish' }),
+      meal({ index: 3, recipeId: LOW, seafoodKind: 'shrimp', kidFriendly: true }),
+      meal({ index: 4, recipeId: OK, seafoodKind: 'shrimp' }),
+    );
+
+  it('boosts a favourite recipe and says so in its reasons', () => {
+    const s = suggestMeals(menu(), { profile: FAMILY, favoriteRecipeIds: [FAV] });
+    const fav = s.ranked.find((c) => c.index === 2)!;
+    const plain = s.ranked.find((c) => c.index === 1)!;
+    expect(fav.score).toBeGreaterThan(plain.score);
+    expect(fav.reasons).toContain('one of your favorites');
+    expect(fav.favorite).toBe(true);
+    expect(plain.favorite).toBeUndefined();
+    expect(s.picks.map((p) => p.index)).toContain(2);
+  });
+
+  it('never suggests a recipe rated 2 or lower (either scale); a higher rating is fine', () => {
+    const s = suggestMeals(menu(), {
+      profile: FAMILY,
+      ratings: [
+        { recipeId: LOW, rating: 2, scale: 'v3' },
+        { recipeId: OK, rating: 3, scale: 'v2' },
+      ],
+    });
+    expect(s.ranked.map((c) => c.index)).not.toContain(3);
+    expect(s.excluded).toContainEqual({ index: 3, name: 'Meal 3', reason: 'you rated it 2 (v3 scale): low-rated recipes are never suggested' });
+    expect(s.ranked.map((c) => c.index)).toContain(4);
+    const v2 = suggestMeals(menu(), { profile: FAMILY, ratings: [{ recipeId: LOW, rating: 1, scale: 'v2' }] });
+    expect(v2.ranked.map((c) => c.index)).not.toContain(3);
+  });
+
+  it('a favourite or low rating on the base recipe applies to its protein swap too', () => {
+    const chicken = meal({
+      index: 10,
+      recipeId: FAV,
+      category: 'Poultry',
+      isSeafood: false,
+      seafoodKind: null,
+      variants: [
+        { index: 11, recipeId: SWAP, title: 'Shrimp', name: 'Shrimp', category: 'Seafood', isSeafood: true, seafoodKind: 'shrimp', premiumPerServingCents: 0, premiumBoxCents: 0, selectedQuantity: 0 },
+      ],
+    });
+    const fav = suggestMeals(menuOf(chicken), { profile: COUPLE, favoriteRecipeIds: [FAV] });
+    expect(fav.ranked[0]).toMatchObject({ index: 11, recipeId: SWAP, favorite: true });
+    const low = suggestMeals(menuOf(chicken), { profile: COUPLE, ratings: [{ recipeId: SWAP, rating: 1, scale: 'v3' }] });
+    expect(low.ranked).toEqual([]);
+    expect(low.excluded[0]).toMatchObject({ index: 11 });
+  });
+
+  it('without favourites or ratings nothing changes', () => {
+    expect(suggestMeals(MENU, { profile: FAMILY, favoriteRecipeIds: [], ratings: [] })).toEqual(suggestMeals(MENU, { profile: FAMILY }));
+  });
+});
+
+describe('isDoubleProtein', () => {
+  const v = (index: number, over: Partial<ProjectedVariant> = {}): ProjectedVariant => ({
+    index,
+    title: 'Shrimp',
+    name: 'Bowls with Shrimp',
+    category: 'Seafood',
+    isSeafood: true,
+    seafoodKind: 'shrimp',
+    premiumPerServingCents: 0,
+    premiumBoxCents: 0,
+    selectedQuantity: 0,
+    ...over,
+  });
+
+  it('"2x" in the title or the name marks a double', () => {
+    expect(isDoubleProtein(v(1, { title: '2x Shrimp' }), [])).toBe(true);
+    expect(isDoubleProtein(v(1, { name: 'Bowls with 2x Shrimp' }), [])).toBe(true);
+    expect(isDoubleProtein(v(1), [])).toBe(false);
+  });
+
+  it('a premium over the cheapest single swap of the same protein on the same base marks a double', () => {
+    const single = v(1, { premiumPerServingCents: 0 });
+    const extra = v(2, { title: 'Extra Shrimp', name: 'Bowls with Extra Shrimp', premiumPerServingCents: 399 });
+    const salmon = v(3, { title: 'Salmon', seafoodKind: 'fish', premiumPerServingCents: 299 });
+    const siblings = [single, extra, salmon];
+    expect(isDoubleProtein(extra, siblings)).toBe(true);
+    expect(isDoubleProtein(single, siblings)).toBe(false);
+    // A different protein at a premium is a swap, not a double.
+    expect(isDoubleProtein(salmon, siblings)).toBe(false);
+    // A "2x" sibling is not a single to compare with.
+    expect(isDoubleProtein(v(5, { premiumPerServingCents: 299 }), [v(4, { title: '2x Shrimp' }), v(5, { premiumPerServingCents: 299 })])).toBe(false);
+    // Non-seafood compares by category.
+    const thighs = v(6, { title: 'Chicken Thighs', category: 'Poultry', isSeafood: false, seafoodKind: null });
+    const breast = v(7, { title: 'Chicken Breast', category: 'Poultry', isSeafood: false, seafoodKind: null, premiumPerServingCents: 199 });
+    expect(isDoubleProtein(breast, [thighs, breast])).toBe(true);
+  });
+
+  it('a chosen double-protein swap says so in its reasons', () => {
+    const chicken = meal({
+      index: 10,
+      category: 'Poultry',
+      isSeafood: false,
+      seafoodKind: null,
+      variants: [v(11, { title: '2x Shrimp' })],
+    });
+    expect(suggestMeals(menuOf(chicken), { profile: COUPLE }).ranked[0]!.reasons).toContain('double-protein upgrade (no single-protein swap fits)');
   });
 });

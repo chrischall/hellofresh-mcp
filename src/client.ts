@@ -12,6 +12,11 @@
 //  - a READ that timed out / could not connect → McpToolError kind timeout / transport.
 // Every request is bounded by a timeout and honours the tool call's
 // cancellation (`currentCallSignal()`, folded in by withAmbientCancellation).
+//
+// One endpoint is the exception to "plain Node fetch": `POST /gw/calculate`
+// (the real box price) is refused by Cloudflare's WAF from Node, so it runs as
+// an in-tab fetch through the bridge (`tabFetch`) — same bearer, same 401
+// replay, same error mapping. It changes nothing, so it is mapped as a READ.
 
 import {
   EdgeBlockedError,
@@ -30,6 +35,7 @@ import {
   withAmbientCancellation,
 } from '@chrischall/mcp-utils';
 import { WEB_ORIGIN, signInHint } from './session.js';
+import type { TabFetchRequest, TabFetchResponse } from './transport.js';
 import type {
   CartMeal,
   CustomerPlan,
@@ -37,7 +43,11 @@ import type {
   MenuWeeks,
   ProductOptions,
   RawDelivery,
+  RawCalculation,
   RawDeliveryMenu,
+  RawRecipeDetail,
+  RawFavorites,
+  RawRatings,
   RawSubscription,
 } from './types.js';
 
@@ -56,13 +66,21 @@ export interface ClientSession {
   redact(text: string): string;
 }
 
+/** Run one request as a fetch in the signed-in tab (HelloFreshBridge.fetchInTab). */
+export type TabFetch = (req: TabFetchRequest) => Promise<TabFetchResponse>;
+
 export interface HelloFreshClientOptions {
   session: ClientSession;
   fetchImpl?: typeof fetch;
+  /** The bridge's in-tab fetch, for the endpoints Cloudflare refuses from Node. Without it they are unavailable. */
+  tabFetch?: TabFetch;
   timeoutMs?: number;
 }
 
-type Method = 'GET' | 'PUT' | 'PATCH' | 'POST';
+type Method = 'GET' | 'PUT' | 'PATCH' | 'POST' | 'DELETE';
+
+/** The ratings scales (`v3` is the 5-star one). */
+export type RatingScale = 'v2' | 'v3';
 
 interface RequestOptions {
   /** Query params; `country`/`locale` are added unless `locale: false`. */
@@ -74,6 +92,10 @@ interface RequestOptions {
   route?: string;
   /** Accept any 2xx body (empty, text or JSON) and return undefined — an edge page is still refused. */
   discardBody?: boolean;
+  /** Send it as an in-tab fetch through the bridge instead of from Node. */
+  viaTab?: boolean;
+  /** A non-GET with no side effects (the price calculator): failures map as a read's. */
+  sideEffectFree?: boolean;
 }
 
 export interface DeliveryMenuQuery {
@@ -121,6 +143,46 @@ export interface OneOffRequest {
   deliveryOption: string;
 }
 
+/** The inputs of `POST /gw/calculate` (docs/HELLOFRESH-API.md "Real box price"). */
+export interface CalculatePriceRequest {
+  /** `subscription.customer.id`. */
+  customerId: number;
+  subscriptionId: string;
+  /** `subscription.couponCode`, or "". */
+  couponCode: string;
+  /** `subscription.shippingAddress.postcode` — sent, never returned. */
+  postcode: string;
+  customerPlanId: string;
+  sku: string;
+  week: string;
+  deliveryOption: string;
+  /** The box's meal indexes (sent as strings). */
+  recipeIndexes: readonly number[];
+  /** `week === subscription.firstDeliveryWeek`. */
+  isFirstOrder: boolean;
+  isFutureWeek: boolean;
+  /** People (servings). */
+  boxSize: number;
+}
+
+/**
+ * The calculator's answer, projected to its money fields (US dollars). The raw
+ * answer also carries the customer/subscription ids and the shipping address:
+ * never returned. Premium recipe charges are NOT in it (HelloFresh's own
+ * calculator leaves them out).
+ */
+export interface BoxPrice {
+  grandTotal?: number;
+  subTotal?: number;
+  discount?: number;
+  shipping?: number;
+  shippingDiscount?: number;
+  tax?: number;
+  couponPercent?: number;
+  couponCode?: string;
+  currency?: string;
+}
+
 export interface PlanDeliveryDetails {
   deliveryOption: string;
   /** Weeks between boxes (1–4). */
@@ -130,11 +192,13 @@ export interface PlanDeliveryDetails {
 export class HelloFreshClient {
   private readonly session: ClientSession;
   private readonly fetchImpl: typeof fetch;
+  private readonly tabFetch: TabFetch | undefined;
   private readonly timeoutMs: number;
 
   constructor(opts: HelloFreshClientOptions) {
     this.session = opts.session;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.tabFetch = opts.tabFetch;
     this.timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
   }
 
@@ -189,6 +253,36 @@ export class HelloFreshClient {
     });
   }
 
+  /** The real box price (`POST /gw/calculate`, in-tab): money fields only. */
+  async calculatePrice(r: CalculatePriceRequest): Promise<BoxPrice> {
+    const raw = await this.request<RawCalculation>('POST', '/calculate', {
+      locale: false,
+      body: calculateBody(r),
+      viaTab: true,
+      sideEffectFree: true,
+    });
+    if (typeof raw?.grandTotal !== 'number') {
+      throw new McpToolError(`${SERVICE}'s price calculator answered without a grand total.`, { kind: 'http' });
+    }
+    return projectCalculation(raw);
+  }
+
+  /** Recipe detail by the menu meal's `recipe.id` (docs/HELLOFRESH-API.md "Recipe detail"). */
+  getRecipe(recipeId: string): Promise<RawRecipeDetail> {
+    return this.request('GET', apiPath`/recipes/recipes/${recipeId}`);
+  }
+
+  /** The customer's favourite recipes (items carry the customer uuid: project before returning). */
+  listFavorites(): Promise<RawFavorites> {
+    return this.request('GET', '/cfs/v2/favorites/recipe');
+  }
+
+  /** The customer's recipe ratings on one scale. The item shape is not yet observed: parse defensively. */
+  listRatings(scale: RatingScale): Promise<RawRatings> {
+    // The documented query uses a lowercase country here.
+    return this.request('GET', `/cfs/${scale}/ratings/recipe`, { locale: false, query: { country: 'us', locale: LOCALE } });
+  }
+
   // ---- writes (docs/HELLOFRESH-API.md "Writes" 1–5, 3 split into 3a size / 3b day) -------------------------
   // Each write is built by an exported pure builder (below), so the confirm
   // preview of a write and the request actually sent are the same object.
@@ -223,6 +317,16 @@ export class HelloFreshClient {
     await this.send(planDeliveryDetailsRequest(customerPlanId, details));
   }
 
+  /** Favourite a recipe (`recipe.id`). 204, no body. */
+  async addFavorite(recipeId: string, week?: string): Promise<void> {
+    await this.send(addFavoriteRequest(recipeId, week), { discardBody: true });
+  }
+
+  /** Un-favourite a recipe (`recipe.id`). 204, no body. */
+  async removeFavorite(recipeId: string): Promise<void> {
+    await this.send(removeFavoriteRequest(recipeId), { discardBody: true });
+  }
+
   private send<T>(w: WriteRequest, opts: Pick<RequestOptions, 'discardBody'> = {}): Promise<T> {
     return this.request(w.method, w.path, { locale: false, query: w.query, body: w.body, route: w.route, ...opts });
   }
@@ -232,7 +336,7 @@ export class HelloFreshClient {
   private async request<T>(method: Method, path: string, opts: RequestOptions = {}): Promise<T> {
     const query = { ...(opts.locale === false ? {} : { country: COUNTRY, locale: LOCALE }), ...opts.query };
     const url = `${API_BASE}${path}${buildQueryString(query)}`;
-    const isWrite = method !== 'GET';
+    const isWrite = method !== 'GET' && !opts.sideEffectFree;
     // One timer per request, armed until the body is read (each 401 replay gets a fresh one).
     let timer = AbortSignal.timeout(this.timeoutMs);
     const fail = (err: unknown) => this.transportError(err, method, url, isWrite, timer.aborted);
@@ -242,6 +346,8 @@ export class HelloFreshClient {
       const headers: Record<string, string> = { authorization: `Bearer ${token}`, accept: 'application/json' };
       if (opts.body !== undefined) headers['content-type'] = 'application/json';
       try {
+        // Given a signal, withAmbientCancellation always returns one.
+        if (opts.viaTab) return await this.fetchInTab(url, method, headers, opts.body, withAmbientCancellation(timer) as AbortSignal);
         return await this.fetchImpl(url, {
           method,
           headers,
@@ -283,6 +389,38 @@ export class HelloFreshClient {
     return parseJsonBody<T>(text, { ...where, status: res.status, headers: res.headers });
   }
 
+  /** One request through the bridge's tab, answered as a Response (so the 401 replay and error mapping apply). */
+  private async fetchInTab(
+    url: string,
+    method: Method,
+    headers: Record<string, string>,
+    body: unknown,
+    signal: AbortSignal,
+  ): Promise<Response> {
+    const tabFetch = this.tabFetch;
+    if (!tabFetch) {
+      throw new McpToolError(`${SERVICE}'s price calculator needs the browser bridge, which this server was started without.`, {
+        kind: 'transport',
+      });
+    }
+    const pending = tabFetch({
+      method,
+      url,
+      headers,
+      body: JSON.stringify(body),
+      // Only side-effect-free requests come through here (see sideEffectFree).
+      retryOnTimeout: true,
+    });
+    // The bridge takes no signal: race it, so the timeout and the caller's cancellation still bound the call.
+    const aborted = new Promise<never>((_, reject) => {
+      if (signal.aborted) reject(signal.reason);
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+    const res = await Promise.race([pending, aborted]);
+    // A Response refuses a body on a null-body status.
+    return new Response([204, 205, 304].includes(res.status) ? null : res.body, { status: res.status });
+  }
+
   private transportError(err: unknown, method: Method, url: string, isWrite: boolean, timedOut: boolean): unknown {
     if (isWrite) {
       return new WriteOutcomeUnknownError(SERVICE, method, {
@@ -315,6 +453,42 @@ export interface WriteRequest {
 }
 
 const LOCALE_QUERY = { country: COUNTRY, locale: LOCALE } as const;
+
+/** The `POST /gw/calculate` body, exactly as the site sends it. `recipeIndexes` MUST be strings. */
+export function calculateBody(r: CalculatePriceRequest) {
+  return {
+    customerID: r.customerId,
+    subscriptionID: Number(r.subscriptionId),
+    couponCode: r.couponCode,
+    shippingAddress: { postcode: r.postcode },
+    planID: r.customerPlanId,
+    locale: LOCALE,
+    country: COUNTRY,
+    products: [{ handle: r.sku, hfWeek: r.week, deliveryOption: r.deliveryOption, recipeIndexes: r.recipeIndexes.map(String) }],
+    weekId: r.week,
+    isFirstOrder: r.isFirstOrder,
+    isRecurring: !r.isFirstOrder,
+    isFutureWeek: r.isFutureWeek,
+    boxSize: r.boxSize,
+  };
+}
+
+/** The money fields of a calculator answer — an allowlist: ids and the address never pass. */
+export function projectCalculation(raw: RawCalculation): BoxPrice {
+  const product = raw.products?.[0];
+  const out: BoxPrice = {
+    grandTotal: raw.grandTotal,
+    subTotal: raw.subTotal,
+    discount: raw.discountAmount,
+    shipping: raw.shippingAmount,
+    shippingDiscount: raw.shippingDiscountAmount,
+    tax: raw.taxAmount,
+    couponPercent: product?.couponPercent,
+    couponCode: raw.couponCode || product?.couponCode || undefined,
+    currency: raw.currency,
+  };
+  return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined && v !== null && v !== '')) as BoxPrice;
+}
 
 export function selectMealsRequest(r: SelectMealsRequest): WriteRequest {
   return {
@@ -389,5 +563,25 @@ export function planDeliveryDetailsRequest(customerPlanId: string, details: Plan
     route: '/api/plans/{planId}/changePlanDeliveryDetails',
     query: { country: COUNTRY },
     body: { deliveryOption: details.deliveryOption, deliveryInterval: details.deliveryInterval },
+  };
+}
+
+export function addFavoriteRequest(recipeId: string, week?: string): WriteRequest {
+  return {
+    method: 'PUT',
+    path: apiPath`/cfs/v2/favorites/recipe/${recipeId}`,
+    route: `/cfs/v2/favorites/recipe/${recipeId}`,
+    query: { ...LOCALE_QUERY, ...(week ? { weekId: week } : {}) },
+    body: undefined,
+  };
+}
+
+export function removeFavoriteRequest(recipeId: string): WriteRequest {
+  return {
+    method: 'DELETE',
+    path: apiPath`/cfs/v2/favorites/recipe/${recipeId}`,
+    route: `/cfs/v2/favorites/recipe/${recipeId}`,
+    query: { ...LOCALE_QUERY },
+    body: undefined,
   };
 }

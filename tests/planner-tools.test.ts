@@ -46,8 +46,13 @@ function defaultRoutes(): Route[] {
     [/\/delivery_dates\/2026-W50$/, W50],
     [/\/delivery_dates\/2026-W4[5-8]$/, (url: URL) => json(delivered(url.pathname.slice(-8)))],
     [/\/my-deliveries\/menu$/, MENU],
+    [/\/cfs\/v2\/favorites\/recipe$/, { total: 0, count: 0, items: [] }],
+    [/\/cfs\/v[23]\/ratings\/recipe$/, { total: 0, count: 0, items: [] }],
   ];
 }
+
+/** Recipe ids on the fixture menu (public menu data). */
+const RECIPE_OF = (index: number): string => MENU.meals.find((m: Any) => m.index === index).recipe.id;
 
 let harness: TestHarness | undefined;
 afterEach(async () => {
@@ -66,22 +71,34 @@ async function call(
   profiles: () => LoadedProfiles = () => PROFILES,
 ) {
   const urls: URL[] = [];
+  const tabBodies: Any[] = [];
   const all = [...routes, ...defaultRoutes()];
-  const fetchImpl = (async (input: string, init?: RequestInit) => {
-    const url = new URL(input);
-    urls.push(url);
-    if ((init?.method ?? 'GET') !== 'GET') throw new Error(`planner sent a ${init?.method}`);
+  const route = async (url: URL): Promise<Response> => {
     const hit = all.find(([re]) => re.test(url.pathname));
     if (!hit) return json({ error: 'not found' }, 404);
     const [, h] = hit;
     return typeof h === 'function' ? (h as Handler)(url) : json(h);
+  };
+  const fetchImpl = (async (input: string, init?: RequestInit) => {
+    const url = new URL(input);
+    urls.push(url);
+    if ((init?.method ?? 'GET') !== 'GET') throw new Error(`planner sent a ${init?.method}`);
+    return route(url);
   }) as unknown as typeof fetch;
+  // The bridge's in-tab fetch — only the side-effect-free price calculator may come through it.
+  const tabFetch = async (req: { method: string; url: string; body?: string }) => {
+    const url = new URL(req.url);
+    if (req.method !== 'POST' || url.pathname !== '/gw/calculate') throw new Error(`planner sent ${req.method} ${url.pathname} in-tab`);
+    tabBodies.push(JSON.parse(req.body!));
+    const res = await route(url);
+    return { status: res.status, body: await res.text() };
+  };
   const session: ClientSession = { withAuth: (c) => c('tok'), redact: (t) => t };
-  const deps: ToolDeps = { ...offlineDeps(), client: new HelloFreshClient({ session, fetchImpl }), now: () => now, profiles };
+  const deps: ToolDeps = { ...offlineDeps(), client: new HelloFreshClient({ session, fetchImpl, tabFetch }), now: () => now, profiles };
   await harness?.close();
   harness = await createTestHarness((server) => registerPlannerTools(server, deps));
   const result = await harness.callTool(name, args);
-  return { result, urls, text: (result.content as { text: string }[])[0]!.text, out: result.isError ? undefined : parseToolResult<Any>(result as CallToolResult) };
+  return { result, urls, tabBodies, text: (result.content as { text: string }[])[0]!.text, out: result.isError ? undefined : parseToolResult<Any>(result as CallToolResult) };
 }
 
 /** Test profiles: a 6-person kid-friendly seafood family (the fixture box is 2 × 6) and a 2-person adventurous couple. */
@@ -97,10 +114,10 @@ const menuWeeks = (urls: URL[]) =>
   urls.filter((u) => u.pathname.endsWith('/menu')).map((u) => u.searchParams.get('week')).sort();
 
 describe('planner tools: registration', () => {
-  it('registers three read-only tools in the food domain; the two planners take a profile', async () => {
+  it('registers four read-only tools in the food domain; the single-week planners take a profile', async () => {
     harness = await createTestHarness((server) => registerPlannerTools(server, offlineDeps()));
     const tools = (await harness.client.listTools()).tools;
-    expect(tools.map((t) => t.name).sort()).toEqual(['hf_list_profiles', 'hf_suggest_meals', 'hf_weekly_plan']);
+    expect(tools.map((t) => t.name).sort()).toEqual(['hf_list_profiles', 'hf_plan_weeks', 'hf_suggest_meals', 'hf_weekly_plan']);
     for (const t of tools) {
       expect(t.annotations?.readOnlyHint, t.name).toBe(true);
       if (t.name === 'hf_list_profiles') {
@@ -110,6 +127,10 @@ describe('planner tools: registration', () => {
       }
       expect(t.annotations?.openWorldHint, t.name).toBe(true);
       expect((t._meta as Any).mint).toMatchObject({ domain: 'food', intent: 'other' });
+      if (t.name === 'hf_plan_weeks') {
+        expect(t.inputSchema.properties).toHaveProperty('weeks');
+        continue;
+      }
       expect(t.inputSchema.properties).toHaveProperty('profile');
       expect(t.inputSchema.properties).toHaveProperty('people');
     }
@@ -205,6 +226,17 @@ describe('hf_suggest_meals', () => {
     expect(premium.premiumBoxCents).toBe(premium.premiumPerServingCents * 2);
   });
 
+  it('recent weeks before the first delivery week had no box: not read, not unreadable', async () => {
+    const { out, urls } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'couple', avoid_recent_weeks: 2 }, [
+      [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W49', firstBoxDelivered: false }] }],
+      [/\/delivery_dates\/2026-W4[78]$/, () => json({ errorMessage: 'nope' }, 404)],
+    ]);
+    expect(out.recentPicks.weeks).toEqual(['2026-W47', '2026-W48']);
+    expect(out.recentPicks.unreadable).toBeUndefined();
+    expect(out.recentPicks.avoidedNames).toEqual([]);
+    expect(urls.some((u: URL) => /delivery_dates\/2026-W4[78]$/.test(u.pathname))).toBe(false);
+  });
+
   it('a protein swap that fits where its course does not carries its base course index', async () => {
     const poultry: LoadedProfiles = { source: 'x', profiles: [{ ...PROFILES.profiles[0]!, name: 'poultry', categories: ['Poultry'] }] };
     const { out } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'poultry', avoid_recent_weeks: 0 }, [], NOW, () => poultry);
@@ -231,19 +263,74 @@ describe('hf_suggest_meals', () => {
   });
 });
 
+/** A synthetic calculator answer (ids + address included, as the real one). */
+const CALC = {
+  grandTotal: 21.41,
+  subTotal: 59.96,
+  taxAmount: 0.42,
+  shippingAmount: 12.99,
+  shippingDiscountAmount: 12.99,
+  discountAmount: 51.96,
+  couponCode: 'EXAMPLE65',
+  currency: 'USD',
+  customerID: 12345678,
+  subscriptionID: 90000001,
+  shippingAddress: { postcode: '00000', address1: '123 Example St' },
+  products: [{ handle: 'US-CBU-2-2-0', couponPercent: 65, couponCode: 'EXAMPLE65', charges: null }],
+};
+const CALC_ROUTE: Route = [/\/gw\/calculate$/, CALC];
+
 describe('hf_weekly_plan', () => {
-  it('a family week at the right size: picks, estimate with the voucher, the summary and one select call', async () => {
+
+  it('HelloFresh’s price for the size the plan NEEDS with the suggested picks, premiums added; no upcoming-list read', async () => {
+    const { out, urls, tabBodies, text } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'couple', avoid_recent_weeks: 0 }, [
+      CALC_ROUTE,
+    ]);
+    expect(urls.some((u) => u.pathname.endsWith('/customers/me/deliveries'))).toBe(false);
+    expect(tabBodies).toHaveLength(1);
+    expect(tabBodies[0]).toMatchObject({
+      boxSize: 2,
+      weekId: '2026-W49',
+      products: [{ handle: 'US-CBU-2-2-0', hfWeek: '2026-W49', recipeIndexes: out.picks.map((p: Any) => String(p.index)) }],
+    });
+    const premiums = out.picks.reduce((sum: number, p: Any) => sum + (p.premiumBoxCents ?? 0), 0) / 100;
+    expect(out.price).toEqual({
+      source: 'hellofresh',
+      grandTotal: 21.41,
+      subTotal: 59.96,
+      discount: 51.96,
+      shipping: 12.99,
+      shippingDiscount: 12.99,
+      tax: 0.42,
+      couponPercent: 65,
+      couponCode: 'EXAMPLE65',
+      currency: 'USD',
+      premiumUpcharge: premiums,
+      totalWithPremiums: Math.round((21.41 + premiums) * 100) / 100,
+      note: expect.stringMatching(/leaves premium recipe charges out/),
+    });
+    expect(out.boxNumberNote).toBeUndefined();
+    expect(out.summary).toMatch(/Box total \$\d+\.\d\d \(HelloFresh price.*−\$51\.96 EXAMPLE65\)\.$/);
+    expect(text).not.toMatch(/12345678|Example St|"00000"/);
+  });
+
+  it('a family week at the right size, calculator unavailable: picks, a labelled estimate, the summary and one select call', async () => {
     const { out, urls } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family' });
     expect(out.box).toEqual({ current: 'US-CBU-2-6-0', required: 'US-CBU-2-6-0', sizeChangeNeeded: false });
     expect(out.delivery).toEqual({ deliveryDate: '2026-11-30', cutoffDate: '2026-11-25T23:59:59-05:00', status: 'running' });
     expect(out.currentPicks.map((p: Any) => p.index)).toEqual([67, 71]);
     expect(out.picks.map((p: Any) => p.index)).toEqual([53, 30]);
     // 14748 + 1299 fee; box 2 = 15 % of the product price (2212).
-    expect(out.estimate).toEqual({
+    expect(out.price).toEqual({
+      source: 'estimate',
+      reason: expect.stringMatching(/price calculator could not be used \(.*404.*\), so this is a local estimate/),
       boxNumber: 2,
-      subtotalCents: 16047,
-      discountCents: 2212,
-      totalCents: 13835,
+      currency: 'USD',
+      subTotal: 160.47,
+      discount: 22.12,
+      grandTotal: 138.35,
+      premiumUpcharge: 0,
+      totalWithPremiums: 138.35,
       voucher: 'EXAMPLE65',
       priceFrom: 'this week',
     });
@@ -270,7 +357,14 @@ describe('hf_weekly_plan', () => {
       why: '2026-W49 is US-CBU-2-6-0; the couple profile needs US-CBU-2-2-0.',
     });
     const premiums = out.picks.reduce((sum: number, p: Any) => sum + (p.premiumBoxCents ?? 0), 0);
-    expect(out.estimate).toMatchObject({ subtotalCents: 5996 + 1299 + premiums, discountCents: 899, priceFrom: '2026-W50 (same box size)' });
+    expect(out.price).toMatchObject({
+      subTotal: 72.95,
+      discount: 8.99,
+      premiumUpcharge: premiums / 100,
+      totalWithPremiums: (5996 + 1299 - 899 + premiums) / 100,
+      priceFrom: '2026-W50 (same box size)',
+    });
+    for (const key of Object.keys(out.price)) expect(key).not.toMatch(/cents/i);
     expect(out.summary).toMatch(/^Couple week \(2 servings\) — delivering Mon 11\/30: .+ \+ .+\. Est\. box total \$\d+\.\d\d \(−\$8\.99 EXAMPLE65\)\.$/);
   });
 
@@ -299,6 +393,19 @@ describe('hf_weekly_plan', () => {
       expect(out.notes[0]).toMatch(/keeps US-CBU-3-6-0/);
     });
 
+    it('a first box with no full box size proposes no hf_set_week_size, and says why', async () => {
+      const odd = { ...W49, product: { ...W49.product, handle: 'US-CBU-SPECIAL', specs: { size: 6 } } };
+      const { out } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'couple', avoid_recent_weeks: 0 }, [
+        firstBox,
+        [/\/delivery_dates\/2026-W49$/, odd],
+        [/deliveries$/, { items: [odd] }],
+      ]);
+      expect(out.followUp.map((f: Any) => f.tool)).toEqual(['hf_select_meals']);
+      expect(out.box).toEqual({ current: 'US-CBU-SPECIAL', required: 'US-CBU-SPECIAL', sizeChangeNeeded: false });
+      expect(out.servings).toBe(6);
+      expect(out.notes.join(' ')).toMatch(/2026-W49 is the first box.*cannot be resized.*no full box size.*no size change is proposed/);
+    });
+
     it('a first box already the profile’s size, or already delivered, adds no note', async () => {
       const same = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [firstBox]);
       expect(same.out.notes).toBeUndefined();
@@ -318,33 +425,33 @@ describe('hf_weekly_plan', () => {
     expect(out.followUp.map((f: Any) => f.tool)).toEqual(['hf_unskip_week', 'hf_set_week_size', 'hf_select_meals']);
     expect(out.followUp[0]).toEqual({ tool: 'hf_unskip_week', arguments: { week: '2026-W50' }, why: '2026-W50 is skipped.' });
     // No upcoming 6-person week: the plan's own unit price.
-    expect(out.estimate).toMatchObject({ boxNumber: 2, subtotalCents: 14748 + 1299, priceFrom: 'the plan price' });
+    expect(out.price).toMatchObject({ boxNumber: 2, subTotal: 160.47, priceFrom: 'the plan price' });
   });
 
   it('no price for the needed size → no estimate, said plainly', async () => {
     const { out } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'couple', avoid_recent_weeks: 0 }, [
       [/deliveries$/, { items: [W49] }],
     ]);
-    expect(out.estimate).toBeUndefined();
-    expect(out.estimateWarning).toMatch(/no price for US-CBU-2-2-0/);
+    expect(out.price).toBeUndefined();
+    expect(out.priceWarning).toMatch(/price calculator could not be used.*no price for US-CBU-2-2-0/);
     expect(out.summary).toMatch(/Box total not estimated\.$/);
   });
 
   it('a week outside the upcoming list: undiscounted unless box_number is given', async () => {
     const routes: Route[] = [[/deliveries$/, { count: 0 }]];
     const plain = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, routes);
-    expect(plain.out.estimate.discountCents).toBe(0);
-    expect(plain.out.estimate.warning).toMatch(/box number/);
+    expect(plain.out.price.discount).toBe(0);
+    expect(plain.out.price.warning).toMatch(/box number/);
     expect(plain.out.summary).toMatch(/\(no voucher discount\)\.$/);
     const numbered = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0, box_number: 1 }, routes);
-    expect(numbered.out.estimate).toMatchObject({ boxNumber: 1, discountCents: Math.round((14748 + 1299) * 0.65) });
+    expect(numbered.out.price).toMatchObject({ boxNumber: 1, discount: Math.round((14748 + 1299) * 0.65) / 100 });
   });
 
   it('next_box_number shifts the voucher’s box', async () => {
     const { out } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0, next_box_number: 60 });
-    expect(out.estimate.boxNumber).toBe(60);
-    expect(out.estimate.warning).toMatch(/covers boxes 1–52/);
-    expect(out.estimate.voucher).toBeUndefined();
+    expect(out.price.boxNumber).toBe(60);
+    expect(out.price.warning).toMatch(/covers boxes 1–52/);
+    expect(out.price.voucher).toBeUndefined();
   });
 
   it('first box not yet delivered: numbered from box 1 over running weeks, a planned skipped week counting as running', async () => {
@@ -355,17 +462,19 @@ describe('hf_weekly_plan', () => {
       [/\/delivery_dates\/2026-W51$/, W51],
     ];
     const w49 = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, routes);
-    expect(w49.out.estimate).toMatchObject({ boxNumber: 1, discountCents: Math.round((14748 + 1299) * 0.65) });
+    expect(w49.out.price).toMatchObject({ boxNumber: 1, discount: Math.round((14748 + 1299) * 0.65) / 100 });
     expect(w49.out.boxNumberNote).toMatch(/first box is not delivered yet/);
     // W50 is skipped, so W51 is box 2 …
     const w51 = await call('hf_weekly_plan', { week: '2026-W51', profile: 'family', avoid_recent_weeks: 0 }, routes);
-    expect(w51.out.estimate.boxNumber).toBe(2);
+    expect(w51.out.price.boxNumber).toBe(2);
     // … unless the plan unskips W50, which then is box 2.
     const w50 = await call('hf_weekly_plan', { week: '2026-W50', profile: 'family', avoid_recent_weeks: 0 }, routes);
-    expect(w50.out.estimate.boxNumber).toBe(2);
+    expect(w50.out.price.boxNumber).toBe(2);
+    expect(w50.out.boxNumberNote).toMatch(/2026-W50 is skipped, but it was counted as a running box/);
+    expect(w51.out.boxNumberNote).not.toMatch(/counted as a running box/);
     // An explicit box_number needs no note.
     const given = await call('hf_weekly_plan', { week: '2026-W51', profile: 'family', avoid_recent_weeks: 0, box_number: 7 }, routes);
-    expect(given.out.estimate.boxNumber).toBe(7);
+    expect(given.out.price.boxNumber).toBe(7);
     expect(given.out.boxNumberNote).toBeUndefined();
   });
 
@@ -432,5 +541,217 @@ describe('hf_weekly_plan', () => {
     const two: LoadedProfiles = { source: 'x', profiles: [{ ...PROFILES.profiles[0]!, avoidRepeatWeeks: 2 }] };
     const { out } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'family' }, [], NOW, () => two);
     expect(out.recentPicks.weeks).toEqual(['2026-W47', '2026-W48']);
+  });
+});
+
+describe('planner: favourites and ratings', () => {
+  it('boosts a favourite recipe and reports what was read', async () => {
+    const { out, urls } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [
+      [/\/cfs\/v2\/favorites\/recipe$/, { total: 1, items: [{ id: 'f1', object_type: 'recipe', object_id: RECIPE_OF(63), customer_uuid: 'secret-uuid' }] }],
+    ]);
+    const all = [...out.picks, ...out.alternates.flatMap((a: Any) => a.options)];
+    const tuna = all.find((c: Any) => c.index === 63);
+    expect(tuna.favorite).toBe(true);
+    expect(tuna.reasons).toContain('one of your favorites');
+    expect(out.personal).toEqual({ favorites: 1, ratings: 0 });
+    expect(JSON.stringify(out)).not.toContain('secret-uuid');
+    expect(urls.map((u) => u.pathname).filter((p) => p.includes('/cfs/')).sort()).toEqual([
+      '/gw/cfs/v2/favorites/recipe',
+      '/gw/cfs/v2/ratings/recipe',
+      '/gw/cfs/v3/ratings/recipe',
+    ]);
+  });
+
+  it('never suggests a recipe rated low; counts unreadable rating items', async () => {
+    const { out } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [
+      [/\/cfs\/v3\/ratings\/recipe$/, { items: [{ object_id: RECIPE_OF(53), rating: 1 }, { unexpected: true }] }],
+    ]);
+    expect(out.picks.map((p: Any) => p.index)).not.toContain(53);
+    const excluded = Object.fromEntries(out.excluded.map((e: Any) => [e.index, e.reason]));
+    expect(excluded[53]).toMatch(/you rated it 1 \(v3 scale\)/);
+    expect(out.personal).toEqual({ favorites: 0, ratings: 1, ratingsSkipped: 1, lowRated: 1 });
+  });
+
+  it('unreadable favourites or ratings do not stop the plan: they are named', async () => {
+    const { out } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [
+      [/\/cfs\/v2\/favorites\/recipe$/, () => json({ error: 'nope' }, 500)],
+      [/\/cfs\/v2\/ratings\/recipe$/, () => json({ error: 'nope' }, 404)],
+    ]);
+    expect(out.picks).toHaveLength(2);
+    expect(out.personal.favorites).toBeUndefined();
+    expect(out.personal.ratings).toBe(0);
+    expect(out.personal.unreadable.map((u: Any) => u.source)).toEqual(['favorites', 'ratings v2']);
+  });
+});
+
+describe('hf_plan_weeks', () => {
+  /** W50 as a running 2 × 2 week (the fixture has it skipped). */
+  const W50_RUNNING: Route = [/\/delivery_dates\/2026-W50$/, { ...W50, status: 'RUNNING' }];
+  const names = (week: Any) => week.picks.map((p: Any) => p.name);
+
+  it('a down bridge is tried once across the weeks: later weeks use the estimate with the same reason, in dollars', async () => {
+    const bridgeDown: Route = [
+      /\/gw\/calculate$/,
+      () => {
+        throw new Error('bridge socket closed');
+      },
+    ];
+    const { out, tabBodies } = await call(
+      'hf_plan_weeks',
+      { weeks: [{ week: '2026-W49', profile: 'family' }, { week: '2026-W50', profile: 'family' }] },
+      [W50_RUNNING, bridgeDown],
+    );
+    expect(tabBodies).toHaveLength(1);
+    const [a, b] = out.weeks;
+    expect([a.price.source, b.price.source]).toEqual(['estimate', 'estimate']);
+    expect(a.price.reason).toMatch(/bridge socket closed/);
+    expect(b.price.reason).toBe(a.price.reason);
+    for (const p of [a.price, b.price]) {
+      for (const key of Object.keys(p)) expect(key).not.toMatch(/cents/i);
+      expect(p.currency).toBe('USD');
+    }
+  });
+
+  it('a week whose menu HelloFresh has not published yet (404) is reported, not fatal: the other weeks are planned', async () => {
+    const unpublished: Route = [
+      /\/my-deliveries\/menu$/,
+      (url: URL) => (url.searchParams.get('week') === '2026-W50' ? json({ status: 'NOT_FOUND' }, 404) : json(MENU)),
+    ];
+    const { out } = await call(
+      'hf_plan_weeks',
+      { weeks: [{ week: '2026-W49', profile: 'family' }, { week: '2026-W50', profile: 'family' }] },
+      [W50_RUNNING, unpublished],
+    );
+    const [w49, w50] = out.weeks;
+    expect(w49.picks.length).toBeGreaterThan(0);
+    expect(w50).toMatchObject({ week: '2026-W50', status: 'menu_not_published' });
+    expect(w50.note).toMatch(/menu.*not.*published/i);
+    expect(out.summary).toMatch(/2026-W50: menu not published yet/);
+    expect(out.total.notIncluded).toContainEqual({ week: '2026-W50', reason: 'menu not published yet' });
+  });
+
+  it('any other menu failure (a 500) still fails hf_plan_weeks: only "not published" is tolerated', async () => {
+    const broken: Route = [/\/my-deliveries\/menu$/, () => json({ error: 'boom' }, 500)];
+    const { result } = await call('hf_plan_weeks', { weeks: [{ week: '2026-W49', profile: 'family' }] }, [W50_RUNNING, broken]);
+    expect(result.isError).toBe(true);
+  });
+
+  it('hf_weekly_plan on a week whose menu is not published says so plainly', async () => {
+    const unpublished: Route = [/\/my-deliveries\/menu$/, () => json({ status: 'NOT_FOUND' }, 404)];
+    const { result, text } = await call('hf_weekly_plan', { week: '2026-W50', profile: 'family' }, [W50_RUNNING, unpublished]);
+    expect(result.isError).toBe(true);
+    expect(text).toMatch(/2026-W50 menu.*not.*published yet/i);
+  });
+
+  it('plans each week in week order exactly as hf_weekly_plan, never repeating a recipe planned for an earlier week', async () => {
+    const { out, urls } = await call(
+      'hf_plan_weeks',
+      { weeks: [{ week: '2026-W50', profile: 'family' }, { week: '2026-W49', profile: 'family' }] },
+      [W50_RUNNING],
+    );
+    expect(out.weeks.map((w: Any) => w.week)).toEqual(['2026-W49', '2026-W50']);
+    // The first week is the single-week plan, unchanged.
+    const single = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family' }, [W50_RUNNING]);
+    expect(out.weeks[0]).toEqual(single.out);
+    // The second never repeats the first's picks, and says what it avoided.
+    const [w49, w50] = out.weeks;
+    expect(w50.picks.length).toBeGreaterThan(0);
+    expect(names(w50).filter((n: string) => names(w49).includes(n))).toEqual([]);
+    expect(w50.alternates.flatMap((a: Any) => a.options.map((o: Any) => o.name)).filter((n: string) => names(w49).includes(n))).toEqual([]);
+    expect(w50.avoidedFromEarlierWeeks).toEqual(names(w49));
+    expect(w49.avoidedFromEarlierWeeks).toBeUndefined();
+    // One summary line per week, then the total.
+    expect(out.summary.split('\n')).toEqual([
+      `2026-W49: ${w49.summary}`,
+      `2026-W50: ${w50.summary}`,
+      'No week has HelloFresh’s own price (2026-W49, 2026-W50: local estimate only), so there is no real total.',
+    ]);
+    expect(out.total).toEqual({
+      pricedWeeks: [],
+      notIncluded: [
+        { week: '2026-W49', reason: 'local estimate only' },
+        { week: '2026-W50', reason: 'local estimate only' },
+      ],
+    });
+    // The writes, per week in order: resize where needed, then pick.
+    expect(out.followUp).toEqual([
+      { week: '2026-W49', calls: w49.followUp },
+      { week: '2026-W50', calls: w50.followUp },
+    ]);
+    expect(w50.followUp.map((f: Any) => f.tool)).toEqual(['hf_set_week_size', 'hf_select_meals']);
+    expect(out.followUpNote).toMatch(/confirm-gated/);
+    expect(out.note).toMatch(/caller/);
+    expect(menuWeeks(urls)).toContain('2026-W50');
+  });
+
+  it('totals HelloFresh’s own prices (premiums included) across the weeks', async () => {
+    const { out } = await call(
+      'hf_plan_weeks',
+      { weeks: [{ week: '2026-W49', profile: 'couple' }, { week: '2026-W50', profile: 'couple' }] },
+      [W50_RUNNING, CALC_ROUTE],
+    );
+    const [a, b] = out.weeks;
+    const sum = Math.round((a.price.totalWithPremiums + b.price.totalWithPremiums) * 100) / 100;
+    expect(out.total).toEqual({ amount: sum, currency: 'USD', pricedWeeks: ['2026-W49', '2026-W50'] });
+    expect(out.summary.split('\n').at(-1)).toBe(`Total for 2 weeks (HelloFresh prices, premiums included): $${sum.toFixed(2)}.`);
+  });
+
+  it('a skipped week is reported as skipped with no suggestions; a locked week adds no writes', async () => {
+    const after49Cutoff = Date.parse('2026-11-27T00:00:00Z');
+    const { out, urls } = await call(
+      'hf_plan_weeks',
+      { weeks: [{ week: '2026-W49', profile: 'family' }, { week: '2026-W50', profile: 'couple' }] },
+      [CALC_ROUTE],
+      after49Cutoff,
+    );
+    const [w49, w50] = out.weeks;
+    expect(w49.locked).toMatch(/cutoff/);
+    expect(w50).toEqual({
+      week: '2026-W50',
+      profile: 'couple',
+      status: 'skipped',
+      delivery: { deliveryDate: '2026-12-07', cutoffDate: '2026-12-02T23:59:59-05:00', status: 'skipped' },
+      note: expect.stringMatching(/skipped.*hf_weekly_plan/),
+    });
+    expect(menuWeeks(urls)).not.toContain('2026-W50');
+    expect(out.followUp).toEqual([]);
+    expect(out.followUpNote).toBeUndefined();
+    expect(out.total).toEqual({
+      amount: w49.price.totalWithPremiums,
+      currency: 'USD',
+      pricedWeeks: ['2026-W49'],
+      notIncluded: [{ week: '2026-W50', reason: 'skipped' }],
+    });
+    expect(out.summary.split('\n')).toEqual([
+      `2026-W49: ${w49.summary}`,
+      '2026-W50: skipped — not planned.',
+      `Total for 1 week (HelloFresh prices, premiums included): $${w49.price.totalWithPremiums.toFixed(2)} — not included: 2026-W50 (skipped).`,
+    ]);
+  });
+
+  it('a week with no price for its size is named as such', async () => {
+    const { out } = await call('hf_plan_weeks', { weeks: [{ week: '2026-W49', profile: 'couple' }] }, [
+      [/deliveries$/, { items: [] }],
+      [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, product: undefined }] }],
+    ]);
+    expect(out.weeks[0].priceWarning).toBeDefined();
+    expect(out.total).toEqual({ pricedWeeks: [], notIncluded: [{ week: '2026-W49', reason: 'no price' }] });
+  });
+
+  it('rejects repeated weeks, and an unknown profile before any HelloFresh call', async () => {
+    const twice = await call('hf_plan_weeks', { weeks: [{ week: '2026-W49', profile: 'family' }, { week: '2026-W49', profile: 'couple' }] });
+    expect(twice.result.isError).toBe(true);
+    expect(twice.text).toMatch(/once/);
+    expect(twice.urls).toEqual([]);
+    const unknown = await call('hf_plan_weeks', { weeks: [{ week: '2026-W49', profile: 'family' }, { week: '2026-W50', profile: 'nobody' }] });
+    expect(unknown.result.isError).toBe(true);
+    expect(unknown.text).toMatch(/nobody/);
+    expect(unknown.urls).toEqual([]);
+    const none = await call('hf_plan_weeks', { weeks: [] });
+    expect(none.result.isError).toBe(true);
+    const seven = await call('hf_plan_weeks', {
+      weeks: Array.from({ length: 7 }, (_, i) => ({ week: `2026-W${40 + i}`, profile: 'family' })),
+    });
+    expect(seven.result.isError).toBe(true);
   });
 });

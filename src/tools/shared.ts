@@ -1,20 +1,26 @@
 // Shared bits for the hf_ tools: the account context every call starts from
 // (the subscription and its plan id), the `week` / `view` parameters, the
-// box-number and estimate helpers, and the brief line.
+// real-price (HelloFresh's calculator) and fallback-estimate helpers, the
+// box-number helpers, and the brief line.
 
 import { z } from 'zod';
-import { McpToolError, messageOf, viewParam, type View } from '@chrischall/mcp-utils';
-import type { HelloFreshClient } from '../client.js';
+import { McpToolError, errorStatusOf, currentCallSignal, messageOf, viewParam, type View } from '@chrischall/mcp-utils';
+import type { BoxPrice, HelloFreshClient } from '../client.js';
 import {
   estimateBoxTotal,
   projectDelivery,
+  projectFavorites,
   projectMenu,
+  projectRatings,
+  type ProjectedRating,
+  type RatingScaleName,
   type BoxEstimate,
   type ProjectedDelivery,
   type ProjectedMenu,
   type SelectedMeal,
 } from '../normalize.js';
-import type { RawSubscription } from '../types.js';
+import { HelloFreshBridgeError } from '../session.js';
+import type { RawDeliveryMenu, RawSubscription } from '../types.js';
 import { WEEK_PATTERN } from '../weeks.js';
 
 // ---- parameters -----------------------------------------------------------------
@@ -86,6 +92,44 @@ export async function customerPlanIdOf(client: HelloFreshClient, account: Accoun
   return plan.id;
 }
 
+/** The week's RAW menu for the delivery's box size (recipe ids included). */
+export async function readRawMenu(
+  client: HelloFreshClient,
+  account: Account,
+  delivery: Pick<ProjectedDelivery, 'week' | 'sku' | 'servings'>,
+  week: string,
+): Promise<RawDeliveryMenu> {
+  if (!delivery.sku || !delivery.servings) {
+    throw new McpToolError(`HelloFresh returned no box size for ${week}, so its menu cannot be read.`);
+  }
+  const customerPlanId = await customerPlanIdOf(client, account);
+  try {
+    return await client.getDeliveryMenu({
+      subscriptionId: account.subscriptionId,
+      week,
+      servings: delivery.servings,
+      sku: delivery.sku,
+      customerPlanId,
+    });
+  } catch (err) {
+    // HelloFresh answers 404 for a week whose menu it has not published yet (menus appear a few weeks ahead).
+    if (errorStatusOf(err) === 404) throw new MenuNotPublishedError(week, err);
+    throw err;
+  }
+}
+
+/** HelloFresh has no menu for the week yet (404 on the delivery menu). */
+export class MenuNotPublishedError extends McpToolError {
+  constructor(readonly week: string, cause?: unknown) {
+    super(`The ${week} menu is not published yet: HelloFresh releases each week's menu a few weeks ahead.`, {
+      hint: 'Try again closer to the week (hf_list_deliveries shows the cutoff), or plan an earlier week now.',
+      status: 404,
+      cause,
+    });
+    this.name = 'MenuNotPublishedError';
+  }
+}
+
 /** The week's menu for the delivery's box size. */
 export async function readMenu(
   client: HelloFreshClient,
@@ -93,40 +137,35 @@ export async function readMenu(
   delivery: Pick<ProjectedDelivery, 'week' | 'sku' | 'servings'>,
   week: string,
 ): Promise<ProjectedMenu> {
-  if (!delivery.sku || !delivery.servings) {
-    throw new McpToolError(`HelloFresh returned no box size for ${week}, so its menu cannot be read.`);
-  }
-  const customerPlanId = await customerPlanIdOf(client, account);
-  const menu = await client.getDeliveryMenu({
-    subscriptionId: account.subscriptionId,
-    week,
-    servings: delivery.servings,
-    sku: delivery.sku,
-    customerPlanId,
-  });
-  return projectMenu(menu);
+  return projectMenu(await readRawMenu(client, account, delivery, week));
 }
 
 /** One week's picks, as hf_recent_picks lists them. */
 export interface WeekPicks {
   week: string;
-  status: ProjectedDelivery['status'];
+  /** `no_box`: the week is before the subscription's first delivery week, so it had no box (and is never read). */
+  status: ProjectedDelivery['status'] | 'no_box';
   deliveryDate?: string;
   picks: ReturnType<typeof compactSelection>[];
 }
 
 /**
- * The picks of each week, best effort: a skipped week has none (and reads no
- * menu); a week whose delivery or menu cannot be read is listed in
- * `unreadable` with the reason. `recipeNames` are the distinct picked names.
+ * The picks of each week, best effort: a week before the subscription's
+ * `firstDeliveryWeek` had no box (`no_box`, nothing is read); a skipped week
+ * has none (and reads no menu); a week whose delivery or menu cannot be read
+ * is listed in `unreadable` with the reason. `recipeNames` are the distinct
+ * picked names.
  */
 export async function readPicks(
   client: HelloFreshClient,
   account: Account,
   weeks: readonly string[],
 ): Promise<{ weeks: WeekPicks[]; recipeNames: string[]; unreadable: Array<{ week: string; reason: string }> }> {
+  const first = account.subscription.firstDeliveryWeek;
+  // ISO weeks (YYYY-Www) order as strings.
+  const hadNoBox = (week: string) => !!first && week < first;
   const results = await Promise.all(
-    weeks.map(async (week) => {
+    weeks.filter((week) => !hadNoBox(week)).map(async (week) => {
       const read = await attempt(async () => {
         const delivery = projectDelivery(await client.getDelivery(account.subscriptionId, week));
         if (delivery.status === 'skipped') return { delivery, picks: [] as WeekPicks['picks'] };
@@ -139,10 +178,148 @@ export async function readPicks(
   const read = results.flatMap(({ week, read: r }): WeekPicks[] =>
     r.ok ? [{ week, status: r.value.delivery.status, deliveryDate: dateOf(r.value.delivery.deliveryDate), picks: r.value.picks }] : [],
   );
+  const noBox = weeks.filter(hadNoBox).map((week): WeekPicks => ({ week, status: 'no_box', picks: [] }));
   return {
-    weeks: read,
+    weeks: [...noBox, ...read].sort(byWeek),
     recipeNames: [...new Set(read.flatMap((w) => w.picks.map((p) => p.name)).filter((n): n is string => !!n))],
     unreadable: results.flatMap(({ week, read: r }) => (r.ok ? [] : [{ week, reason: r.reason }])),
+  };
+}
+
+// ---- the real price (POST /gw/calculate) ------------------------------------------
+
+/** How many weeks hf_list_deliveries prices at once (each is a menu read + an in-tab calculator call). */
+export const PRICE_CONCURRENCY = 3;
+
+export const PREMIUM_NOTE =
+  'HelloFresh’s own price calculator (its checkout price) leaves premium recipe charges out: premiumUpcharge is ' +
+  'the meals’ upcharge for the box, reported separately and added in totalWithPremiums.';
+
+export const PREMIUM_UNKNOWN_NOTE =
+  'HelloFresh’s own price calculator leaves premium recipe charges out, and the menu could not be read, so any ' +
+  'premium upcharge is unknown and NOT included.';
+
+/** HelloFresh's own price for a box (US dollars), plus the premiums it leaves out. */
+export type HelloFreshPrice = { source: 'hellofresh' } & BoxPrice & {
+  premiumUpcharge?: number;
+  totalWithPremiums?: number;
+  note: string;
+};
+
+export interface PriceInput {
+  week: string;
+  sku: string | undefined;
+  /** Servings. */
+  people: number | undefined;
+  deliveryOption: string | undefined;
+  deliveryDate: string | undefined;
+  /** The box's meals (picked or suggested). */
+  recipeIndexes: readonly number[];
+  /** Their Σ premium upcharge for the box, cents — undefined when the meals are unknown. */
+  premiumCents: number | undefined;
+}
+
+const roundCents = (dollars: number) => Math.round(dollars * 100) / 100;
+
+/** Σ premium upcharge of a selection, in cents. */
+export const premiumCentsOf = (meals: ReadonlyArray<{ premiumBoxCents: number; quantity?: number }>) =>
+  meals.reduce((sum, m) => sum + m.premiumBoxCents * (m.quantity ?? 1), 0);
+
+/**
+ * The box's price from HelloFresh's own calculator (an in-tab fetch through the
+ * bridge). Throws when an input is missing or the calculator fails: callers
+ * fall back to the local estimate (`estimatedPrice`) with the reason.
+ */
+export async function hellofreshPrice(
+  client: HelloFreshClient,
+  account: Account,
+  input: PriceInput,
+  now: number,
+): Promise<HelloFreshPrice> {
+  const s = account.subscription;
+  const deliveryOption = input.deliveryOption ?? s.deliveryOption?.handle;
+  const needed: Record<string, unknown> = {
+    'customer id': s.customer?.id,
+    postcode: s.shippingAddress?.postcode,
+    'box SKU': input.sku,
+    servings: input.people,
+    'delivery option': deliveryOption,
+  };
+  const missing = Object.keys(needed).filter((k) => needed[k] === undefined || needed[k] === '');
+  if (missing.length > 0) throw new McpToolError(`HelloFresh returned no ${missing.join(', ')}, which its price calculator needs.`);
+  const price = await client.calculatePrice({
+    customerId: s.customer!.id!,
+    subscriptionId: account.subscriptionId,
+    couponCode: s.couponCode ?? '',
+    postcode: s.shippingAddress!.postcode!,
+    customerPlanId: await customerPlanIdOf(client, account),
+    sku: input.sku!,
+    week: input.week,
+    deliveryOption: deliveryOption!,
+    recipeIndexes: input.recipeIndexes,
+    isFirstOrder: input.week === s.firstDeliveryWeek,
+    // An upcoming box (no date: it is on the upcoming list, so assume so).
+    isFutureWeek: input.deliveryDate ? Date.parse(input.deliveryDate) > now : true,
+    boxSize: input.people!,
+  });
+  if (input.premiumCents === undefined) return { source: 'hellofresh', ...price, note: PREMIUM_UNKNOWN_NOTE };
+  const premiumUpcharge = input.premiumCents / 100;
+  return {
+    source: 'hellofresh',
+    ...price,
+    premiumUpcharge,
+    totalWithPremiums: roundCents(price.grandTotal! + premiumUpcharge),
+    note: PREMIUM_NOTE,
+  };
+}
+
+/** The local estimate, labelled as the fallback it is, with why HelloFresh's price could not be used. */
+export function estimatedPrice(estimate: NumberedEstimate, reason: string, full: boolean) {
+  return {
+    source: 'estimate' as const,
+    reason: `HelloFresh’s price calculator could not be used (${reason}), so this is a local estimate.`,
+    ...estimateInDollars(estimate, full),
+  };
+}
+
+// ---- favourites and ratings -------------------------------------------------------
+
+export const RATING_SCALES: readonly RatingScaleName[] = ['v2', 'v3'];
+
+/** The user's ratings on each scale, best effort: an unreadable scale is named with the reason. */
+export async function readRatings(
+  client: HelloFreshClient,
+  scales: readonly RatingScaleName[] = RATING_SCALES,
+): Promise<{ ratings: ProjectedRating[]; skipped: number; unreadable: Array<{ source: string; reason: string }> }> {
+  const reads = await Promise.all(scales.map(async (scale) => ({ scale, read: await attempt(() => client.listRatings(scale)) })));
+  const ratings: ProjectedRating[] = [];
+  let skipped = 0;
+  const unreadable: Array<{ source: string; reason: string }> = [];
+  for (const { scale, read } of reads) {
+    if (!read.ok) {
+      unreadable.push({ source: `ratings ${scale}`, reason: read.reason });
+      continue;
+    }
+    const projected = projectRatings(read.value, scale);
+    ratings.push(...projected.ratings);
+    skipped += projected.skipped;
+  }
+  return { ratings, skipped, unreadable };
+}
+
+/** Favourites + ratings for the planner, best effort (neither is needed to plan). */
+export async function readPersonal(client: HelloFreshClient): Promise<{
+  favoriteRecipeIds?: string[];
+  ratings: ProjectedRating[];
+  ratingsSkipped: number;
+  unreadable: Array<{ source: string; reason: string }>;
+}> {
+  const [favorites, rated] = await Promise.all([attempt(async () => projectFavorites(await client.listFavorites())), readRatings(client)]);
+  return {
+    ...(favorites.ok ? { favoriteRecipeIds: favorites.value.favorites.map((f) => f.recipeId) } : {}),
+    ratings: rated.ratings,
+    ratingsSkipped: rated.skipped,
+    unreadable: [...(favorites.ok ? [] : [{ source: 'favorites', reason: favorites.reason }]), ...rated.unreadable],
   };
 }
 
@@ -203,13 +380,29 @@ export function estimateFor(
   return { boxNumber, ...estimateBoxTotal(delivery, selection, account.subscription.voucherInfo, boxNumber) };
 }
 
-/** The few estimate fields a compact answer keeps. */
-export function compactEstimate(e: NumberedEstimate) {
+/** Cents → US dollars (2 decimals). */
+const usd = (cents: number) => Math.round(cents) / 100;
+
+/**
+ * The estimate as a `price` shows it: US dollars, named as HelloFresh's own
+ * price is — so a caller reads ONE unit whatever the source. `subTotal` is
+ * product + fees + shipping before the voucher, `grandTotal` that less the
+ * discount (premiums excluded, as HelloFresh's calculator), `totalWithPremiums`
+ * adds the meals' `premiumUpcharge`. Compact keeps the totals; full adds the
+ * parts and the voucher rule applied.
+ */
+export function estimateInDollars(e: NumberedEstimate, full: boolean) {
+  const beforeDiscount = e.productCents + e.feeCents + e.shippingCents;
   return {
     ...(e.boxNumber !== undefined ? { boxNumber: e.boxNumber } : {}),
-    subtotalCents: e.subtotalCents,
-    discountCents: e.discountCents,
-    totalCents: e.totalCents,
+    currency: 'USD' as const,
+    ...(full ? { product: usd(e.productCents), fees: usd(e.feeCents), shipping: usd(e.shippingCents) } : {}),
+    subTotal: usd(beforeDiscount),
+    discount: usd(e.discountCents),
+    grandTotal: usd(beforeDiscount - e.discountCents),
+    premiumUpcharge: usd(e.premiumCents),
+    totalWithPremiums: usd(e.totalCents),
+    ...(full && e.voucher ? { voucher: e.voucher } : {}),
     ...(e.warning ? { warning: e.warning } : {}),
   };
 }
@@ -225,14 +418,61 @@ export function compactSelection(s: SelectedMeal) {
   };
 }
 
-/** A best-effort read: the value, or the reason it could not be read. */
-export async function attempt<T>(run: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; reason: string }> {
+export type Attempt<T> = { ok: true; value: T } | { ok: false; reason: string };
+
+/**
+ * A best-effort read: the value, or the reason it could not be read. A caller
+ * that cancelled is not a reason: its abort propagates.
+ */
+export async function attempt<T>(run: () => Promise<T>): Promise<Attempt<T>> {
   try {
     return { ok: true, value: await run() };
   } catch (err) {
+    if (currentCallSignal()?.aborted) throw err;
     return { ok: false, reason: messageOf(err) };
   }
 }
+
+/**
+ * Whether a failure is the transport/bridge (unreachable, timed out, the
+ * browser session unreadable) rather than HelloFresh answering — an HTTP 4xx
+ * or a missing input is not.
+ */
+export function isBridgeFailure(err: unknown): boolean {
+  if (err instanceof HelloFreshBridgeError) return true;
+  if (err instanceof McpToolError) return err.kind === 'transport' || err.kind === 'timeout';
+  // Duck-typed: a duplicated @fetchproxy package breaks instanceof.
+  return err instanceof Error && err.name.startsWith('Fetchproxy');
+}
+
+/**
+ * The calculator attempts of ONE tool call. The first attempt runs alone
+ * (concurrent weeks wait for it); once one fails because of the
+ * transport/bridge, every later week skips the calculator and gets that same
+ * reason at once, so a down bridge costs one failure (one timeout), not one
+ * per week. A cancelled call propagates (see `attempt`).
+ */
+export function calculatorGate() {
+  let down: string | undefined;
+  let first: Promise<unknown> | undefined;
+  return async function price<T>(run: () => Promise<T>): Promise<Attempt<T>> {
+    // Settled either way (it rejects only when the caller cancelled — then this call's own attempt rethrows too).
+    if (first) await Promise.allSettled([first]);
+    if (down !== undefined) return { ok: false, reason: down };
+    const tried = attempt(async () => {
+      try {
+        return await run();
+      } catch (err) {
+        if (isBridgeFailure(err)) down = messageOf(err);
+        throw err;
+      }
+    });
+    first ??= tried;
+    return tried;
+  };
+}
+
+export type CalculatorGate = ReturnType<typeof calculatorGate>;
 
 // ---- brief ----------------------------------------------------------------------------
 

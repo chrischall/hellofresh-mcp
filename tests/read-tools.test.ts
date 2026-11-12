@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createTestHarness, parseToolResult, type TestHarness } from '@chrischall/mcp-utils/test';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { HelloFreshClient, type ClientSession } from '../src/client.js';
 import { registerReadTools } from '../src/tools/reads.js';
-import { boxNumbering } from '../src/tools/shared.js';
+import { McpToolError, withCallSignal } from '@chrischall/mcp-utils';
+import { HelloFreshBridgeError } from '../src/session.js';
+import { attempt, boxNumbering, calculatorGate } from '../src/tools/shared.js';
 import type { ToolDeps } from '../src/tools/index.js';
 import { offlineDeps } from './helpers.js';
 
@@ -46,27 +48,66 @@ afterEach(async () => {
 /** 2026-11-26 (a Thursday in 2026-W48), noon UTC. */
 const NOW = Date.parse('2026-11-26T17:00:00Z');
 
-async function call(name: string, args: Record<string, unknown> = {}, routes: Route[] = []) {
+/** A synthetic `POST /gw/calculate` answer (ids and address included, as the real one — they must never pass). */
+const CALC = {
+  grandTotal: 52.65,
+  subTotal: 147.48,
+  taxAmount: 1.03,
+  shippingAmount: 12.99,
+  shippingDiscountAmount: 12.99,
+  discountAmount: 108.85,
+  couponCode: 'EXAMPLE65',
+  currency: 'USD',
+  customerID: 12345678,
+  subscriptionID: 90000001,
+  shippingAddress: { postcode: '00000', address1: '123 Example St' },
+  products: [{ handle: 'US-CBU-2-6-0', couponPercent: 65, couponCode: 'EXAMPLE65', charges: null }],
+};
+
+/** The route that makes HelloFresh's calculator answer (the default answers 404, so tools fall back to the estimate). */
+const CALC_ROUTE: Route = [/\/gw\/calculate$/, CALC];
+
+async function call(name: string, args: Record<string, unknown> = {}, routes: Route[] = [], now = NOW) {
   const urls: URL[] = [];
+  const tabBodies: Any[] = [];
   const all = [...routes, ...defaultRoutes()];
-  const fetchImpl = (async (input: string) => {
-    const url = new URL(input);
-    urls.push(url);
+  const route = async (url: URL): Promise<Response> => {
     const hit = all.find(([re]) => re.test(url.pathname));
     if (!hit) return json({ error: 'not found' }, 404);
     const [, h] = hit;
     return typeof h === 'function' ? (h as Handler)(url) : json(h);
+  };
+  const fetchImpl = (async (input: string) => {
+    const url = new URL(input);
+    urls.push(url);
+    return route(url);
   }) as unknown as typeof fetch;
+  // The bridge's in-tab fetch: calls are recorded apart from Node's.
+  const tabFetch = async (req: { url: string; body?: string }) => {
+    tabBodies.push(JSON.parse(req.body!));
+    const res = await route(new URL(req.url));
+    return { status: res.status, body: await res.text() };
+  };
   const session: ClientSession = { withAuth: (c) => c('tok'), redact: (t) => t };
   const deps: ToolDeps = {
     ...offlineDeps(),
-    client: new HelloFreshClient({ session, fetchImpl }),
-    now: () => NOW,
+    client: new HelloFreshClient({ session, fetchImpl, tabFetch }),
+    now: () => now,
   };
   await harness?.close();
   harness = await createTestHarness((server) => registerReadTools(server, deps));
   const result = await harness.callTool(name, args);
-  return { result, urls, text: textOf(result) };
+  return { result, urls, tabBodies, text: textOf(result) };
+}
+
+/** A price exposes ONE unit: US dollars, never a *Cents field, every amount at most 2 decimals. */
+function expectDollars(price: Record<string, unknown>) {
+  for (const [key, value] of Object.entries(price)) {
+    expect(key, key).not.toMatch(/cents/i);
+    if (typeof value === 'number' && key !== 'boxNumber' && key !== 'couponPercent') {
+      expect(Math.round(value * 100) / 100, key).toBe(value);
+    }
+  }
 }
 
 const textOf = (r: CallToolResult) => (r.content as { text: string }[])[0]!.text;
@@ -202,9 +243,10 @@ describe('hf_list_deliveries', () => {
     expect(nameless.text.split('\n')).toEqual(['unknown week — no date — unknown', 'unknown week — no date — running']);
   });
 
-  it('compact: running weeks carry an estimate (box 2 by default), skipped/delivered weeks do not', async () => {
+  it('compact, calculator unavailable: running weeks carry a labelled estimate (box 2 by default), others none', async () => {
     const { result, urls } = await call('hf_list_deliveries');
-    expect(paths(urls)).toEqual(['/gw/api/customers/me/subscriptions', '/gw/api/customers/me/deliveries']);
+    // Only the running week reads its menu (for the premiums).
+    expect(paths(urls)).toEqual(['/gw/api/customers/me/subscriptions', '/gw/api/customers/me/deliveries', '/gw/my-deliveries/menu']);
     const out = parseToolResult<Any>(result);
     expect(out.deliveries.map((d: Any) => d.week)).toEqual(['2026-W46', '2026-W49', '2026-W50']);
     const w49 = out.deliveries[1];
@@ -219,28 +261,41 @@ describe('hf_list_deliveries', () => {
       deliveryName: 'Monday 8AM-8PM',
     });
     // 14748 + 1299 fee; 15 % of the product only (box 2: applicable_to products) = 2212.
-    expect(w49.estimate).toEqual({ boxNumber: 2, subtotalCents: 16047, discountCents: 2212, totalCents: 13835 });
-    expect(out.deliveries[0].estimate).toBeUndefined();
-    expect(out.deliveries[2].estimate).toBeUndefined();
-    expect(out.estimateNote).toMatch(/premium/);
-    expect(out.estimateNote).toMatch(/next_box_number/);
+    expect(w49.price).toEqual({
+      source: 'estimate',
+      reason: expect.stringMatching(/price calculator could not be used \(.*404.*\), so this is a local estimate/),
+      boxNumber: 2,
+      currency: 'USD',
+      subTotal: 160.47,
+      discount: 22.12,
+      grandTotal: 138.35,
+      premiumUpcharge: 0,
+      totalWithPremiums: 138.35,
+    });
+    expectDollars(w49.price);
+    expect(out.deliveries[0].price).toBeUndefined();
+    expect(out.deliveries[2].price).toBeUndefined();
+    expect(out.priceNote).toMatch(/premium/);
+    expect(out.priceNote).toMatch(/US dollars, for both sources/);
+    expect(out.priceNote).not.toMatch(/cents/i);
+    expect(out.priceNote).toMatch(/next_box_number/);
     // The fixture subscription does not say whether its first box was delivered.
-    expect(out.estimateNote).toMatch(/does not say whether the first box was delivered.*ASSUMES.*box 2/);
+    expect(out.priceNote).toMatch(/does not say whether the first box was delivered.*ASSUMES.*box 2/);
   });
 
   it('next_box_number moves the voucher rule; a box past the voucher is flagged', async () => {
     const first = parseToolResult<Any>((await call('hf_list_deliveries', { next_box_number: 1 })).result);
     // Box 1: 65 % of product + fee + shipping (applicable_to both) = round(16047 × 0.65) = 10431.
-    expect(first.deliveries[1].estimate).toMatchObject({ boxNumber: 1, discountCents: 10431, totalCents: 5616 });
+    expect(first.deliveries[1].price).toMatchObject({ source: 'estimate', boxNumber: 1, discount: 104.31, grandTotal: 56.16, totalWithPremiums: 56.16 });
     const late = parseToolResult<Any>((await call('hf_list_deliveries', { next_box_number: 60 })).result);
-    expect(late.deliveries[1].estimate).toMatchObject({ boxNumber: 60, discountCents: 0 });
-    expect(late.deliveries[1].estimate.warning).toMatch(/boxes 1–52/);
+    expect(late.deliveries[1].price).toMatchObject({ boxNumber: 60, discount: 0 });
+    expect(late.deliveries[1].price.warning).toMatch(/boxes 1–52/);
   });
 
   it('numbers consecutive running weeks', async () => {
     const two = { items: [W49, { ...W49, id: '2026-W51', deliveryDate: '2026-12-14T00:00:00-05:00' }] };
     const out = parseToolResult<Any>((await call('hf_list_deliveries', {}, [[/deliveries$/, two]])).result);
-    expect(out.deliveries.map((d: Any) => d.estimate.boxNumber)).toEqual([2, 3]);
+    expect(out.deliveries.map((d: Any) => d.price.boxNumber)).toEqual([2, 3]);
   });
 
   it('first box not yet delivered: the earliest running week is box 1, skipped weeks take no number', async () => {
@@ -252,27 +307,27 @@ describe('hf_list_deliveries', () => {
       [/deliveries$/, { items: [W52, W50, W51, W49] }],
     ];
     const out = parseToolResult<Any>((await call('hf_list_deliveries', {}, routes)).result);
-    expect(out.deliveries.map((d: Any) => [d.week, d.estimate?.boxNumber])).toEqual([
+    expect(out.deliveries.map((d: Any) => [d.week, d.price?.boxNumber])).toEqual([
       ['2026-W49', 1],
       ['2026-W50', undefined],
       ['2026-W51', 2],
       ['2026-W52', 3],
     ]);
     // Box 1: 65 % of product + fee + shipping.
-    expect(out.deliveries[0].estimate).toMatchObject({ discountCents: 10431 });
-    expect(out.estimateNote).toMatch(/first box is not delivered yet.*box 1/);
-    expect(out.estimateNote).not.toMatch(/assum/i);
+    expect(out.deliveries[0].price).toMatchObject({ discount: 104.31 });
+    expect(out.priceNote).toMatch(/first box is not delivered yet.*box 1/);
+    expect(out.priceNote).not.toMatch(/assum/i);
     // hf_get_delivery numbers the same way.
     const one = parseToolResult<Any>((await call('hf_get_delivery', { week: '2026-W51' }, [
       ...routes,
       [/\/delivery_dates\/2026-W51$/, W51],
     ])).result);
-    expect(one.estimate.boxNumber).toBe(2);
+    expect(one.price.boxNumber).toBe(2);
     expect(one.boxNumberNote).toMatch(/first box is not delivered yet/);
     // An explicit next_box_number still wins.
     const forced = parseToolResult<Any>((await call('hf_list_deliveries', { next_box_number: 5 }, routes)).result);
-    expect(forced.deliveries[0].estimate.boxNumber).toBe(5);
-    expect(forced.estimateNote).toMatch(/next_box_number 5/);
+    expect(forced.deliveries[0].price.boxNumber).toBe(5);
+    expect(forced.priceNote).toMatch(/next_box_number 5/);
   });
 
   it('first box already delivered: box 2 is an explicit assumption', async () => {
@@ -280,22 +335,238 @@ describe('hf_list_deliveries', () => {
     const out = parseToolResult<Any>(
       (await call('hf_list_deliveries', {}, [[/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [established] }]])).result,
     );
-    expect(out.deliveries[1].estimate.boxNumber).toBe(2);
-    expect(out.estimateNote).toMatch(/first box was delivered in 2026-W40.*not how many.*ASSUMES.*box 2.*next_box_number/);
+    expect(out.deliveries[1].price.boxNumber).toBe(2);
+    expect(out.priceNote).toMatch(/first box was delivered in 2026-W40.*not how many.*ASSUMES.*box 2.*next_box_number/);
   });
 
-  it('full: the whole allowlisted projection and the whole estimate', async () => {
+  it('full: the whole allowlisted projection and the whole estimate (calculator unavailable)', async () => {
     const { result, text } = await call('hf_list_deliveries', { view: 'full' });
     const w49 = parseToolResult<Any>(result).deliveries[1];
     expect(w49.allowedActions).toEqual(['mealSwap', 'pause', 'oneOffChange', 'updateDeliveryWeekday']);
     expect(w49.oneOffDaySlots).toHaveLength(2);
-    expect(w49.estimate).toMatchObject({ estimate: true, productCents: 14748, feeCents: 1299, boxNumber: 2 });
+    expect(w49.price).toMatchObject({ source: 'estimate', product: 147.48, fees: 12.99, boxNumber: 2, currency: 'USD' });
+    expect(w49.price.estimate).toBeUndefined();
+    expectDollars(w49.price);
     expect(text).not.toMatch(/Example St|ORDER-SYNTHETIC|tracking/);
   });
 });
 
+describe('calculatorGate: one tool call’s calculator attempts', () => {
+  const ok = async () => 1;
+
+  it('after a bridge/transport failure, later weeks skip the calculator with the same reason', async () => {
+    for (const down of [
+      new McpToolError('Could not reach HelloFresh: socket hang up', { kind: 'transport' }),
+      new McpToolError('HelloFresh did not answer POST in time (30000 ms).', { kind: 'timeout' }),
+      new HelloFreshBridgeError('Could not read the HelloFresh session from the browser: tab closed', new Error('x')),
+      Object.assign(new Error('bridge offline'), { name: 'FetchproxyBridgeOffline' }),
+    ]) {
+      const gate = calculatorGate();
+      const run = vi.fn(ok);
+      const first = await gate(() => Promise.reject(down));
+      expect(first).toEqual({ ok: false, reason: down.message });
+      expect(await gate(run)).toEqual({ ok: false, reason: down.message });
+      expect(run).not.toHaveBeenCalled();
+    }
+  });
+
+  it('an HTTP answer from HelloFresh (4xx) is not a bridge failure: the next week still tries', async () => {
+    const gate = calculatorGate();
+    const http = new McpToolError('HelloFresh POST /calculate failed: HTTP 404', { kind: 'http', status: 404 });
+    expect(await gate(() => Promise.reject(http))).toMatchObject({ ok: false });
+    expect(await gate(() => Promise.reject(new McpToolError('no customer id'))) ).toMatchObject({ ok: false });
+    expect(await gate(ok)).toEqual({ ok: true, value: 1 });
+  });
+
+  it('concurrent weeks wait for the first attempt, so a down bridge is tried once', async () => {
+    const gate = calculatorGate();
+    let release!: () => void;
+    const tried = vi.fn(() => new Promise<never>((_, reject) => {
+      release = () => reject(new McpToolError('bridge down', { kind: 'transport' }));
+    }));
+    const all = Promise.all([gate(tried), gate(tried), gate(tried)]);
+    await vi.waitFor(() => expect(tried).toHaveBeenCalledTimes(1));
+    release();
+    expect((await all).map((r) => r.ok)).toEqual([false, false, false]);
+    expect(tried).toHaveBeenCalledTimes(1);
+  });
+
+  it('a cancelled call propagates the abort instead of falling back', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled by caller'));
+    const gate = calculatorGate();
+    await expect(withCallSignal(controller.signal, () => gate(() => Promise.reject(new Error('cancelled by caller'))))).rejects.toThrow(
+      'cancelled by caller',
+    );
+    await expect(withCallSignal(controller.signal, () => attempt(() => Promise.reject(new Error('cancelled by caller'))))).rejects.toThrow(
+      'cancelled by caller',
+    );
+  });
+});
+
+describe('a down bridge fails fast within one call', () => {
+  const BRIDGE_DOWN: Route = [
+    /\/gw\/calculate$/,
+    () => {
+      throw new Error('bridge socket closed');
+    },
+  ];
+  const weeks = ['2026-W49', '2026-W51', '2026-W52', '2026-W53'].map((id, i) => ({
+    ...W49,
+    id,
+    deliveryDate: new Date(Date.parse('2026-11-30T05:00:00Z') + i * 7 * 86_400_000).toISOString(),
+  }));
+
+  it('hf_list_deliveries: the calculator is tried once; every running week gets the estimate with the same reason', async () => {
+    const { result, tabBodies } = await call('hf_list_deliveries', {}, [BRIDGE_DOWN, [/deliveries$/, { items: weeks }]]);
+    expect(tabBodies).toHaveLength(1);
+    const prices = parseToolResult<Any>(result).deliveries.map((d: Any) => d.price);
+    expect(prices.map((p: Any) => p.source)).toEqual(['estimate', 'estimate', 'estimate', 'estimate']);
+    expect(new Set(prices.map((p: Any) => p.reason)).size).toBe(1);
+    expect(prices[0].reason).toMatch(/bridge socket closed/);
+  });
+
+  it('an HTTP 404 from the calculator is not a bridge failure: every week still asks HelloFresh', async () => {
+    const { tabBodies } = await call('hf_list_deliveries', {}, [[/deliveries$/, { items: weeks }]]);
+    expect(tabBodies).toHaveLength(4);
+  });
+});
+
+describe('real box prices (HelloFresh’s calculator, in-tab)', () => {
+  const HF_PRICE = {
+    source: 'hellofresh',
+    grandTotal: 52.65,
+    subTotal: 147.48,
+    discount: 108.85,
+    shipping: 12.99,
+    shippingDiscount: 12.99,
+    tax: 1.03,
+    couponPercent: 65,
+    couponCode: 'EXAMPLE65',
+    currency: 'USD',
+  };
+
+  it('hf_list_deliveries: the running week carries HelloFresh’s price, premiums separate, and never ids/address', async () => {
+    const { result, text, tabBodies } = await call('hf_list_deliveries', {}, [CALC_ROUTE]);
+    const out = parseToolResult<Any>(result);
+    expect(out.deliveries[1].price).toEqual({
+      ...HF_PRICE,
+      premiumUpcharge: 0,
+      totalWithPremiums: 52.65,
+      note: expect.stringMatching(/leaves premium recipe charges out/),
+    });
+    expectDollars(out.deliveries[1].price);
+    expect(out.priceNote).toMatch(/US dollars/);
+    expect(out.priceNote).not.toMatch(/cents/i);
+    expect(out.deliveries[0].price).toBeUndefined();
+    expect(out.deliveries[2].price).toBeUndefined();
+    expect(out.priceNote).toMatch(/"hellofresh" is HelloFresh’s own checkout price/);
+    // No estimate in the answer: the box-number note is not needed.
+    expect(out.priceNote).not.toMatch(/next_box_number/);
+    expect(text).not.toMatch(/12345678|90000001|Example St|00000/);
+    // The documented body, built from the subscription + delivery + the week's picks.
+    expect(tabBodies).toEqual([
+      {
+        customerID: 12345678,
+        subscriptionID: 90000001,
+        couponCode: 'EXAMPLE65',
+        shippingAddress: { postcode: '00000' },
+        planID: '11111111-2222-4333-8444-555555555555',
+        locale: 'en-US',
+        country: 'US',
+        products: [{ handle: 'US-CBU-2-6-0', hfWeek: '2026-W49', deliveryOption: 'US-1-0800-2000', recipeIndexes: ['67', '71'] }],
+        weekId: '2026-W49',
+        isFirstOrder: false,
+        isRecurring: true,
+        isFutureWeek: true,
+        boxSize: 6,
+      },
+    ]);
+  });
+
+  it('hf_list_deliveries prices every running week (bounded in parallel)', async () => {
+    const weeks = ['2026-W49', '2026-W50', '2026-W51', '2026-W52', '2026-W53'].map((id) => ({ ...W49, id }));
+    const { result, tabBodies } = await call('hf_list_deliveries', { view: 'full' }, [CALC_ROUTE, [/deliveries$/, { items: weeks }]]);
+    expect(tabBodies.map((b) => b.weekId).sort()).toEqual(weeks.map((w) => w.id));
+    expect(parseToolResult<Any>(result).deliveries.every((d: Any) => d.price.source === 'hellofresh')).toBe(true);
+  });
+
+  it('no running week with a week id: nothing priced, no price note', async () => {
+    const { result, tabBodies } = await call('hf_list_deliveries', {}, [CALC_ROUTE, [/deliveries$/, { items: [{ status: 'RUNNING' }, W50] }]]);
+    const out = parseToolResult<Any>(result);
+    expect(tabBodies).toEqual([]);
+    expect(out.deliveries.every((d: Any) => d.price === undefined)).toBe(true);
+    expect(out.priceNote).toBeUndefined();
+  });
+
+  it('an unreadable menu: HelloFresh’s total without premiums, said plainly', async () => {
+    const { result, tabBodies } = await call('hf_list_deliveries', {}, [CALC_ROUTE, [/\/menu$/, () => json({ e: 1 }, 400)]]);
+    const price = parseToolResult<Any>(result).deliveries[1].price;
+    expect(price).toMatchObject({ source: 'hellofresh', grandTotal: 52.65 });
+    expect(price.premiumUpcharge).toBeUndefined();
+    expect(price.totalWithPremiums).toBeUndefined();
+    expect(price.note).toMatch(/premium upcharge is unknown and NOT included/);
+    expect(tabBodies[0].products[0].recipeIndexes).toEqual([]);
+  });
+
+  it('hf_get_delivery: HelloFresh’s price plus the premium pick, and NO upcoming-list read', async () => {
+    const menu = structuredClone(MENU);
+    for (const m of menu.meals) if (m.index === 47) m.selection = { limit: 1, quantity: 1 };
+    const { result, urls, tabBodies } = await call('hf_get_delivery', { week: '2026-W49' }, [CALC_ROUTE, [/\/menu$/, menu]]);
+    expect(paths(urls)).not.toContain('/gw/api/customers/me/deliveries');
+    const out = parseToolResult<Any>(result);
+    expect(out.price).toEqual({ ...HF_PRICE, premiumUpcharge: 89.94, totalWithPremiums: 142.59, note: expect.any(String) });
+    expect(out.boxNumberNote).toBeUndefined();
+    expect(tabBodies[0].products[0].recipeIndexes).toEqual(['47', '67', '71']);
+  });
+
+  it('hf_get_delivery: an explicit box_number needs no upcoming-list read even for the estimate', async () => {
+    const { result, urls } = await call('hf_get_delivery', { week: '2026-W49', box_number: 2 });
+    expect(paths(urls)).not.toContain('/gw/api/customers/me/deliveries');
+    expect(parseToolResult<Any>(result).price).toMatchObject({ source: 'estimate', boxNumber: 2 });
+  });
+
+  it('first box, a past date, no coupon, and the subscription’s slot when the week names none', async () => {
+    const sub = { ...SUB, couponCode: null, firstDeliveryWeek: '2026-W49' };
+    const past = { ...W49, deliveryDate: '2026-11-01T00:00:00-05:00', deliveryOption: undefined };
+    const { tabBodies } = await call('hf_get_delivery', { week: '2026-W49' }, [
+      CALC_ROUTE,
+      [/\/api\/customers\/me\/subscriptions$/, { items: [sub] }],
+      [/\/delivery_dates\/2026-W49$/, past],
+    ]);
+    expect(tabBodies[0]).toMatchObject({
+      couponCode: '',
+      isFirstOrder: true,
+      isRecurring: false,
+      isFutureWeek: false,
+      products: [{ deliveryOption: 'US-1-0800-2000' }],
+    });
+  });
+
+  it('a week with no date is assumed upcoming', async () => {
+    const { tabBodies } = await call('hf_get_delivery', { week: '2026-W49' }, [
+      CALC_ROUTE,
+      [/\/delivery_dates\/2026-W49$/, { ...W49, deliveryDate: undefined }],
+    ]);
+    expect(tabBodies[0].isFutureWeek).toBe(true);
+  });
+
+  it('inputs the calculator needs are missing → the estimate, naming them; nothing is sent', async () => {
+    const sub = { ...SUB, customer: undefined, shippingAddress: { postcode: '' }, deliveryOption: undefined };
+    const { result, tabBodies } = await call('hf_get_delivery', { week: '2026-W49' }, [
+      CALC_ROUTE,
+      [/\/api\/customers\/me\/subscriptions$/, { items: [sub] }],
+      [/\/delivery_dates\/2026-W49$/, { ...W49, deliveryOption: undefined, product: undefined }],
+    ]);
+    expect(tabBodies).toEqual([]);
+    const price = parseToolResult<Any>(result).price;
+    expect(price.source).toBe('estimate');
+    expect(price.reason).toMatch(/no customer id, postcode, box SKU, servings, delivery option/);
+  });
+});
+
 describe('hf_get_delivery', () => {
-  it('compact: the week, its selection and an estimate including the premium of picked meals', async () => {
+  it('compact, calculator unavailable: the week, its selection and an estimate including the picks’ premium', async () => {
     const { result, urls } = await call('hf_get_delivery', { week: '2026-W49' });
     expect(paths(urls).sort()).toEqual(
       [
@@ -319,7 +590,8 @@ describe('hf_get_delivery', () => {
       { index: 67, quantity: 1, name: 'Pesto Shrimp Linguine with Lemony Panko Topping' },
       { index: 71, quantity: 1, name: 'Chesapeake Tilapia & Corn Chowder' },
     ]);
-    expect(out.estimate).toEqual({ boxNumber: 2, subtotalCents: 16047, discountCents: 2212, totalCents: 13835 });
+    expect(out.price).toMatchObject({ source: 'estimate', boxNumber: 2, subTotal: 160.47, discount: 22.12, totalWithPremiums: 138.35 });
+    expect(out.price.reason).toMatch(/404/);
   });
 
   it('a premium pick adds its box upcharge; an explicit box_number wins', async () => {
@@ -330,7 +602,21 @@ describe('hf_get_delivery', () => {
     ]);
     const out = parseToolResult<Any>(result);
     expect(out.selection.find((s: Any) => s.index === 47)).toMatchObject({ premiumBoxCents: 8994 });
-    expect(out.estimate).toMatchObject({ boxNumber: 3, premiumCents: 8994, subtotalCents: 16047 + 8994 });
+    expect(out.price).toMatchObject({
+      source: 'estimate',
+      boxNumber: 3,
+      currency: 'USD',
+      product: 147.48,
+      fees: 12.99,
+      shipping: 0,
+      subTotal: 160.47,
+      premiumUpcharge: 89.94,
+      // Box 3: 15 % of the product only (2212 cents).
+      discount: 22.12,
+      grandTotal: 138.35,
+      totalWithPremiums: 228.29,
+    });
+    expectDollars(out.price);
     expect(out.allowedActions).toBeDefined();
   });
 
@@ -344,25 +630,27 @@ describe('hf_get_delivery', () => {
     expect(out.selection.find((s: Any) => s.index === 560)).toMatchObject({ baseIndex: 67, premiumBoxCents: 2994 });
   });
 
-  it('a skipped week: no menu read, no estimate', async () => {
-    const { result, urls } = await call('hf_get_delivery', { week: '2026-W50' });
+  it('a skipped week: no menu read, no price, no upcoming-list read', async () => {
+    const { result, urls, tabBodies } = await call('hf_get_delivery', { week: '2026-W50' });
+    expect(paths(urls)).not.toContain('/gw/api/customers/me/deliveries');
+    expect(tabBodies).toEqual([]);
     expect(paths(urls)).not.toContain('/gw/my-deliveries/menu');
     const out = parseToolResult<Any>(result);
     expect(out.status).toBe('skipped');
     expect(out.selection).toBeUndefined();
-    expect(out.estimate).toBeUndefined();
+    expect(out.price).toBeUndefined();
   });
 
   it('a week outside the upcoming list: estimate undiscounted, saying why', async () => {
     const { result } = await call('hf_get_delivery', { week: '2026-W49' }, [[/deliveries$/, { count: 0 }]]);
     const out = parseToolResult<Any>(result);
-    expect(out.estimate.discountCents).toBe(0);
-    expect(out.estimate.warning).toMatch(/box number/);
+    expect(out.price.discount).toBe(0);
+    expect(out.price.warning).toMatch(/box number/);
   });
 
   it('next_box_number shifts the derived box number', async () => {
     const out = parseToolResult<Any>((await call('hf_get_delivery', { week: '2026-W49', next_box_number: 1 })).result);
-    expect(out.estimate).toMatchObject({ boxNumber: 1, discountCents: 10431 });
+    expect(out.price).toMatchObject({ boxNumber: 1, discount: 104.31 });
   });
 
   it('an unknown box number and an unreadable menu: both reasons are given', async () => {
@@ -370,7 +658,7 @@ describe('hf_get_delivery', () => {
       [/deliveries$/, { items: [] }],
       [/\/menu$/, () => json({ e: 1 }, 400)],
     ]);
-    const warning = parseToolResult<Any>(result).estimate.warning;
+    const warning = parseToolResult<Any>(result).price.warning;
     expect(warning).toMatch(/box number/);
     expect(warning).toMatch(/premium upcharges are not included/);
   });
@@ -381,7 +669,7 @@ describe('hf_get_delivery', () => {
     expect(result.isError).toBeFalsy();
     expect(out.selection).toBeUndefined();
     expect(out.selectionError).toMatch(/400/);
-    expect(out.estimate.warning).toMatch(/premium/);
+    expect(out.price.warning).toMatch(/premium/);
   });
 
   it('falls back to /api/plans when the subscription has no customerPlanId', async () => {
@@ -608,6 +896,49 @@ describe('hf_recent_picks', () => {
     expect(out.weeks.map((w: Any) => w.week)).toEqual(['2026-W44', '2026-W45', '2026-W46', '2026-W47', '2026-W48']);
     expect(out.unreadable).toBeUndefined();
     expect(urls.filter((u) => u.pathname.includes('/delivery_dates/'))).toHaveLength(5);
+  });
+
+  it('weeks before the subscription\'s first delivery week are "no box" (never read), not unreadable', async () => {
+    const { result, urls } = await call('hf_recent_picks', { weeks_back: 3, through_week: '2026-W49' }, [
+      [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W48' }] }],
+      [/delivery_dates\/2026-W48$/, week('2026-W48', { status: 'PAUSED' })],
+    ]);
+    const out = parseToolResult<Any>(result);
+    expect(out.weeks.map((w: Any) => [w.week, w.status])).toEqual([
+      ['2026-W46', 'no_box'],
+      ['2026-W47', 'no_box'],
+      ['2026-W48', 'skipped'],
+      ['2026-W49', 'running'],
+    ]);
+    expect(out.weeks[0].picks).toEqual([]);
+    expect(out.firstDeliveryWeek).toBe('2026-W48');
+    expect(out.unreadable).toBeUndefined();
+    const read = urls.filter((u) => u.pathname.includes('/delivery_dates/')).map((u) => u.pathname.slice(-8)).sort();
+    expect(read).toEqual(['2026-W48', '2026-W49']);
+  });
+
+  it('a genuine failure ON or after the first delivery week is still unreadable', async () => {
+    const { result } = await call('hf_recent_picks', { weeks_back: 1, through_week: '2026-W49' }, [
+      [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W48' }] }],
+      [/delivery_dates\/2026-W48$/, () => json({ errorMessage: 'not found' }, 404)],
+    ]);
+    const out = parseToolResult<Any>(result);
+    expect(out.unreadable.map((u: Any) => u.week)).toEqual(['2026-W48']);
+    expect(out.weeks.map((w: Any) => w.week)).toEqual(['2026-W49']);
+  });
+
+  it('the current week honours MCP_USER_TZ (the user\'s wall-clock date, not UTC)', async () => {
+    // Monday 2026-11-30 03:00 UTC is still Sunday evening in New York: 2026-W48 there, 2026-W49 in UTC.
+    const instant = Date.parse('2026-11-30T03:00:00Z');
+    const routes: Route[] = [[/delivery_dates\//, () => json({ status: 'PAUSED' })]];
+    try {
+      vi.stubEnv('MCP_USER_TZ', 'America/New_York');
+      expect(parseToolResult<Any>((await call('hf_recent_picks', { weeks_back: 0 }, routes, instant)).result).throughWeek).toBe('2026-W48');
+      vi.stubEnv('MCP_USER_TZ', 'UTC');
+      expect(parseToolResult<Any>((await call('hf_recent_picks', { weeks_back: 0 }, routes, instant)).result).throughWeek).toBe('2026-W49');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('a week with no box size is unreadable', async () => {

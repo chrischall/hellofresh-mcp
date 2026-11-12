@@ -46,6 +46,8 @@ export interface RawSubscription {
   canceledAt?: string | null;
   isActive?: boolean;
   voucherInfo?: VoucherInfo | null;
+  /** Only the postcode is typed: the price calculator needs it. It is never returned. */
+  shippingAddress?: { postcode?: string } | null;
 }
 
 export interface RawDelivery {
@@ -99,6 +101,7 @@ export interface RawTag {
 }
 
 export interface RawRecipe {
+  /** 24-hex; the favourites and ratings endpoints key on it. */
   id?: string;
   name?: string;
   headline?: string;
@@ -134,8 +137,63 @@ export interface RawDeliveryMenu {
   modularity?: RawModularity[];
 }
 
+/** `GET /cfs/v2/favorites/recipe` (items also carry `customer_uuid`, deliberately untyped: never returned). */
+export interface RawFavorites {
+  total?: number;
+  count?: number;
+  items?: Array<{ id?: string; object_type?: string; object_id?: string; created_at?: string }>;
+}
+
+/** `GET /cfs/{v2|v3}/ratings/recipe`. The item shape is NOT yet observed: every item is parsed defensively. */
+export interface RawRatings {
+  total?: number;
+  count?: number;
+  items?: unknown[];
+}
+
 /** One meal line of a cart PUT. */
 export interface CartMeal {
   index: number;
   quantity: number;
+}
+
+/**
+ * `POST /gw/calculate`'s answer (US dollars). It also carries the customer and
+ * subscription ids and the shipping address — deliberately NOT typed here:
+ * `projectCalculation` keeps only the money fields.
+ */
+export interface RawCalculation {
+  grandTotal?: number;
+  subTotal?: number;
+  taxAmount?: number;
+  shippingAmount?: number;
+  shippingDiscountAmount?: number;
+  discountAmount?: number;
+  couponCode?: string | null;
+  currency?: string;
+  products?: Array<{ couponPercent?: number; couponCode?: string | null }> | null;
+}
+
+/** `GET /gw/recipes/recipes/{id}` (docs/HELLOFRESH-API.md "Recipe detail"). Third-party text throughout. */
+export interface RawRecipeDetail {
+  id?: string;
+  name?: string;
+  headline?: string;
+  description?: string;
+  /** HelloFresh's difficulty level (1 = easiest). */
+  difficulty?: number | string | null;
+  prepTime?: string;
+  totalTime?: string;
+  category?: { name?: string } | null;
+  allergens?: Array<{ name?: string }> | null;
+  /** Per serving. */
+  nutrition?: Array<{ name?: string; amount?: number | null; unit?: string }> | null;
+  ingredients?: Array<{ id?: string; name?: string; shipped?: boolean }> | null;
+  /** Amounts per box size, joined to `ingredients` on id; `amount` may be null. */
+  yields?: Array<{ yields?: number; ingredients?: Array<{ id?: string; amount?: number | null; unit?: string }> | null }> | null;
+  steps?: Array<{ index?: number; instructions?: string; instructionsHTML?: string }> | null;
+  /** Shape not pinned down in the docs: a name or `{name}`. */
+  utensils?: Array<string | { name?: string }> | null;
+  cardLink?: string | null;
+  websiteUrl?: string | null;
 }

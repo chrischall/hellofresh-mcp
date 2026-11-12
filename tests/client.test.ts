@@ -7,7 +7,7 @@ import {
   withCallSignal,
   writeOutcomeStatus,
 } from '@chrischall/mcp-utils';
-import { API_BASE, HelloFreshClient, type ClientSession } from '../src/client.js';
+import { API_BASE, HelloFreshClient, calculateBody, type ClientSession } from '../src/client.js';
 import { HelloFreshSession, encodeAuthCookie, type SessionBridge } from '../src/session.js';
 
 // Synthetic ids only.
@@ -98,6 +98,15 @@ describe('HelloFreshClient reads', () => {
     expect(calls[0]!.url).toBe(
       `${API_BASE}/my-deliveries/menu?subscription=${SUB}&week=${WEEK}&locale=en-US&servings=6&product-sku=US-CBU-2-6-0&customerPlanId=${PLAN}&exclude-feedback=true`,
     );
+  });
+
+  it('reads a recipe detail by recipe id with country/locale, the id encoded as one segment', async () => {
+    const { client, calls } = setup([json({ name: 'R' }), json({})]);
+    await expect(client.getRecipe('6a50d4c1748b7cf792501852')).resolves.toEqual({ name: 'R' });
+    expect(calls[0]!.url).toBe(`${API_BASE}/recipes/recipes/6a50d4c1748b7cf792501852?country=US&locale=en-US`);
+    expect(calls[0]!.method).toBe('GET');
+    await client.getRecipe('x/y');
+    expect(calls[1]!.url).toBe(`${API_BASE}/recipes/recipes/x%2Fy?country=US&locale=en-US`);
   });
 
   it('encodes path values as one segment', async () => {
@@ -370,5 +379,233 @@ describe('HelloFreshClient with the real session', () => {
     const client = new HelloFreshClient({ session, fetchImpl: fetchImpl as unknown as typeof fetch });
     await expect(client.listDeliveries()).resolves.toEqual({ count: 0, items: [] });
     expect(seen).toEqual(['Bearer access-OLD', 'Bearer access-NEW']);
+  });
+});
+
+describe('HelloFreshClient.calculatePrice (POST /gw/calculate, in-tab)', () => {
+  // Synthetic values only.
+  const REQ = {
+    customerId: 12345678,
+    subscriptionId: SUB,
+    couponCode: 'EXAMPLE65',
+    postcode: '00000',
+    customerPlanId: PLAN,
+    sku: 'US-CBU-2-6-0',
+    week: WEEK,
+    deliveryOption: 'US-1-0800-2000',
+    recipeIndexes: [640, 71],
+    isFirstOrder: false,
+    isFutureWeek: true,
+    boxSize: 6,
+  };
+  const ANSWER = {
+    grandTotal: 52.65,
+    subTotal: 147.48,
+    taxAmount: 1.03,
+    shippingAmount: 12.99,
+    shippingDiscountAmount: 12.99,
+    discountAmount: 108.85,
+    couponCode: 'EXAMPLE65',
+    isRecurring: true,
+    boxSize: 6,
+    currency: 'USD',
+    customerID: 12345678,
+    subscriptionID: 90000001,
+    shippingAddress: { postcode: '00000', address1: '123 Example St' },
+    products: [{ handle: 'US-CBU-2-6-0', hfWeek: WEEK, unitPrice: 147.48, couponPercent: 65, couponCode: 'EXAMPLE65', charges: null }],
+  };
+
+  type TabCall = { method: string; url: string; headers: Record<string, string>; body?: string; retryOnTimeout?: boolean };
+
+  function tabSetup(answers: Array<{ status: number; body: string } | Error | (() => Promise<never>)>, opts: { timeoutMs?: number } = {}) {
+    const tabCalls: TabCall[] = [];
+    const tabFetch = vi.fn(async (req: TabCall) => {
+      tabCalls.push(req);
+      const next = answers.shift();
+      if (next === undefined) throw new Error('unexpected tab request');
+      if (next instanceof Error) throw next;
+      if (typeof next === 'function') return next();
+      return next;
+    });
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('Node fetch must not be used for /calculate');
+    });
+    const session: ClientSession = {
+      async withAuth(call) {
+        const res = await call('tok-1');
+        return res.status === 401 ? call('tok-2') : res;
+      },
+      redact: (text) => text.replaceAll('tok-1', '[redacted]'),
+    };
+    const client = new HelloFreshClient({ session, fetchImpl: fetchImpl as unknown as typeof fetch, tabFetch, ...opts });
+    return { client, tabCalls, fetchImpl };
+  }
+
+  it('builds the documented body: recipeIndexes as STRINGS, ids as ints, isRecurring = !isFirstOrder', () => {
+    expect(calculateBody(REQ)).toEqual({
+      customerID: 12345678,
+      subscriptionID: 90000001,
+      couponCode: 'EXAMPLE65',
+      shippingAddress: { postcode: '00000' },
+      planID: PLAN,
+      locale: 'en-US',
+      country: 'US',
+      products: [{ handle: 'US-CBU-2-6-0', hfWeek: WEEK, deliveryOption: 'US-1-0800-2000', recipeIndexes: ['640', '71'] }],
+      weekId: WEEK,
+      isFirstOrder: false,
+      isRecurring: true,
+      isFutureWeek: true,
+      boxSize: 6,
+    });
+    expect(calculateBody({ ...REQ, isFirstOrder: true }).isRecurring).toBe(false);
+  });
+
+  it('POSTs through the tab with the bearer + JSON content type, and projects ONLY the money fields', async () => {
+    const { client, tabCalls, fetchImpl } = tabSetup([{ status: 200, body: JSON.stringify(ANSWER) }]);
+    const price = await client.calculatePrice(REQ);
+    expect(price).toEqual({
+      grandTotal: 52.65,
+      subTotal: 147.48,
+      discount: 108.85,
+      shipping: 12.99,
+      shippingDiscount: 12.99,
+      tax: 1.03,
+      couponPercent: 65,
+      couponCode: 'EXAMPLE65',
+      currency: 'USD',
+    });
+    expect(JSON.stringify(price)).not.toMatch(/12345678|90000001|Example St|00000/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(tabCalls).toHaveLength(1);
+    const call = tabCalls[0]!;
+    expect(call.method).toBe('POST');
+    expect(call.url).toBe(`${API_BASE}/calculate`);
+    expect(call.headers['authorization']).toBe('Bearer tok-1');
+    expect(call.headers['content-type']).toBe('application/json');
+    expect(JSON.parse(call.body!)).toEqual(calculateBody(REQ));
+    // Side-effect free, so a bridge timeout may re-send it.
+    expect(call.retryOnTimeout).toBe(true);
+  });
+
+  it('a sparse answer projects to the fields present (no coupon, no products)', async () => {
+    const { client } = tabSetup([{ status: 200, body: JSON.stringify({ grandTotal: 72.95 }) }]);
+    await expect(client.calculatePrice(REQ)).resolves.toEqual({ grandTotal: 72.95 });
+  });
+
+  it('a 401 replays once with the fresh token through the tab', async () => {
+    const { client, tabCalls } = tabSetup([
+      { status: 401, body: '{"errorMessage":"no Bearer token"}' },
+      { status: 200, body: JSON.stringify(ANSWER) },
+    ]);
+    await expect(client.calculatePrice(REQ)).resolves.toMatchObject({ grandTotal: 52.65 });
+    expect(tabCalls.map((c) => c.headers['authorization'])).toEqual(['Bearer tok-1', 'Bearer tok-2']);
+  });
+
+  it('a 400 is an http error (never WriteOutcomeUnknown: the calculator changes nothing)', async () => {
+    const { client } = tabSetup([{ status: 400, body: 'cannot unmarshal number' }]);
+    const err = (await client.calculatePrice(REQ).catch((e: unknown) => e)) as McpToolError;
+    expect(err).toBeInstanceOf(McpToolError);
+    expect(err.status).toBe(400);
+    expect(err.message).toContain('/calculate');
+  });
+
+  it('a 5xx is a plain http error, not WriteOutcomeUnknownError', async () => {
+    const { client } = tabSetup([{ status: 502, body: 'bad gateway' }]);
+    const err = await client.calculatePrice(REQ).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(WriteOutcomeUnknownError);
+    expect((err as McpToolError).status).toBe(502);
+  });
+
+  it('a Cloudflare page in the tab is EdgeBlockedError', async () => {
+    const page = '<html><title>Attention Required! | Cloudflare</title><script>window._cf_chl_opt={}</script></html>';
+    const { client } = tabSetup([{ status: 403, body: page }]);
+    await expect(client.calculatePrice(REQ)).rejects.toBeInstanceOf(EdgeBlockedError);
+  });
+
+  it('an empty 204 answer, or one without a grand total, is an error, not a crash', async () => {
+    const { client } = tabSetup([
+      { status: 204, body: '' },
+      { status: 200, body: '{"subTotal":1}' },
+    ]);
+    await expect(client.calculatePrice(REQ)).rejects.toThrow(/without a grand total/);
+    await expect(client.calculatePrice(REQ)).rejects.toThrow(/without a grand total/);
+  });
+
+  it('a bridge that cannot deliver is a transport error', async () => {
+    const { client } = tabSetup([new Error('no signed-in tab')]);
+    const err = (await client.calculatePrice(REQ).catch((e: unknown) => e)) as McpToolError;
+    expect(err).toBeInstanceOf(McpToolError);
+    expect(err.kind).toBe('transport');
+  });
+
+  it('a tab fetch that never answers times out', async () => {
+    const { client } = tabSetup([() => new Promise<never>(() => {})], { timeoutMs: 5 });
+    const err = (await client.calculatePrice(REQ).catch((e: unknown) => e)) as McpToolError;
+    expect(err.kind).toBe('timeout');
+  });
+
+  it('honours the caller cancellation while the tab fetch is pending', async () => {
+    const { client, tabCalls } = tabSetup([() => new Promise<never>(() => {})]);
+    const controller = new AbortController();
+    const pending = withCallSignal(controller.signal, () => client.calculatePrice(REQ));
+    await vi.waitFor(() => expect(tabCalls).toHaveLength(1));
+    controller.abort(new Error('cancelled by caller'));
+    await expect(pending).rejects.toThrow('cancelled by caller');
+  });
+
+  it('a call cancelled before the tab fetch starts never waits on it', async () => {
+    const { client } = tabSetup([() => new Promise<never>(() => {})]);
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled early'));
+    await expect(withCallSignal(controller.signal, () => client.calculatePrice(REQ))).rejects.toThrow('cancelled early');
+  });
+
+  it('without a bridge the calculator is unavailable', async () => {
+    const session: ClientSession = { withAuth: (call) => call('t'), redact: (t) => t };
+    const client = new HelloFreshClient({ session, fetchImpl: vi.fn() as unknown as typeof fetch });
+    await expect(client.calculatePrice(REQ)).rejects.toThrow(/browser bridge/);
+  });
+});
+
+describe('HelloFreshClient favorites and ratings', () => {
+  const RECIPE = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+
+  it('lists favorites with country/locale', async () => {
+    const body = { skip: 0, take: 50, total: 1, count: 1, items: [{ id: 'f1', object_type: 'recipe', object_id: RECIPE }] };
+    const { client, calls } = setup([json(body)]);
+    await expect(client.listFavorites()).resolves.toEqual(body);
+    expect(calls[0]!.url).toBe(`${API_BASE}/cfs/v2/favorites/recipe?country=US&locale=en-US`);
+    expect(calls[0]!.method).toBe('GET');
+  });
+
+  it('adds a favorite with PUT (204, no body), passing the week when given', async () => {
+    const { client, calls } = setup([new Response(null, { status: 204 }), new Response(null, { status: 204 })]);
+    await expect(client.addFavorite(RECIPE, WEEK)).resolves.toBeUndefined();
+    await client.addFavorite(RECIPE);
+    expect(calls[0]!.method).toBe('PUT');
+    expect(calls[0]!.url).toBe(`${API_BASE}/cfs/v2/favorites/recipe/${RECIPE}?country=US&locale=en-US&weekId=${WEEK}`);
+    expect(calls[0]!.body).toBeUndefined();
+    expect(calls[1]!.url).toBe(`${API_BASE}/cfs/v2/favorites/recipe/${RECIPE}?country=US&locale=en-US`);
+  });
+
+  it('removes a favorite with DELETE (204)', async () => {
+    const { client, calls } = setup([new Response(null, { status: 204 })]);
+    await expect(client.removeFavorite(RECIPE)).resolves.toBeUndefined();
+    expect(calls[0]!.method).toBe('DELETE');
+    expect(calls[0]!.url).toBe(`${API_BASE}/cfs/v2/favorites/recipe/${RECIPE}?country=US&locale=en-US`);
+  });
+
+  it('a 5xx after a favorite write is WriteOutcomeUnknownError', async () => {
+    const { client } = setup([json({ error: 'boom' }, 502)]);
+    await expect(client.removeFavorite(RECIPE)).rejects.toBeInstanceOf(WriteOutcomeUnknownError);
+  });
+
+  it('lists ratings on the v2 or v3 scale with the documented lowercase country', async () => {
+    const empty = { skip: 0, take: 50, total: 0, count: 0, items: [] };
+    const { client, calls } = setup([json(empty), json(empty)]);
+    await expect(client.listRatings('v2')).resolves.toEqual(empty);
+    await client.listRatings('v3');
+    expect(calls[0]!.url).toBe(`${API_BASE}/cfs/v2/ratings/recipe?country=us&locale=en-US`);
+    expect(calls[1]!.url).toBe(`${API_BASE}/cfs/v3/ratings/recipe?country=us&locale=en-US`);
   });
 });
