@@ -101,6 +101,7 @@ export interface RawTag {
 }
 
 export interface RawRecipe {
+  /** 24-hex; the favourites and ratings endpoints key on it. */
   id?: string;
   name?: string;
   headline?: string;
@@ -134,6 +135,20 @@ export interface RawDeliveryMenu {
   meals?: RawMeal[];
   mealsReady?: boolean;
   modularity?: RawModularity[];
+}
+
+/** `GET /cfs/v2/favorites/recipe` (items also carry `customer_uuid`, deliberately untyped: never returned). */
+export interface RawFavorites {
+  total?: number;
+  count?: number;
+  items?: Array<{ id?: string; object_type?: string; object_id?: string; created_at?: string }>;
+}
+
+/** `GET /cfs/{v2|v3}/ratings/recipe`. The item shape is NOT yet observed: every item is parsed defensively. */
+export interface RawRatings {
+  total?: number;
+  count?: number;
+  items?: unknown[];
 }
 
 /** One meal line of a cart PUT. */

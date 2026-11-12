@@ -9,7 +9,11 @@ import type { BoxPrice, HelloFreshClient } from '../client.js';
 import {
   estimateBoxTotal,
   projectDelivery,
+  projectFavorites,
   projectMenu,
+  projectRatings,
+  type ProjectedRating,
+  type RatingScaleName,
   type BoxEstimate,
   type ProjectedDelivery,
   type ProjectedMenu,
@@ -256,6 +260,47 @@ export function estimatedPrice(estimate: NumberedEstimate, reason: string, full:
     source: 'estimate' as const,
     reason: `HelloFresh’s price calculator could not be used (${reason}), so this is a local estimate.`,
     ...(full ? estimate : compactEstimate(estimate)),
+  };
+}
+
+// ---- favourites and ratings -------------------------------------------------------
+
+export const RATING_SCALES: readonly RatingScaleName[] = ['v2', 'v3'];
+
+/** The user's ratings on each scale, best effort: an unreadable scale is named with the reason. */
+export async function readRatings(
+  client: HelloFreshClient,
+  scales: readonly RatingScaleName[] = RATING_SCALES,
+): Promise<{ ratings: ProjectedRating[]; skipped: number; unreadable: Array<{ source: string; reason: string }> }> {
+  const reads = await Promise.all(scales.map(async (scale) => ({ scale, read: await attempt(() => client.listRatings(scale)) })));
+  const ratings: ProjectedRating[] = [];
+  let skipped = 0;
+  const unreadable: Array<{ source: string; reason: string }> = [];
+  for (const { scale, read } of reads) {
+    if (!read.ok) {
+      unreadable.push({ source: `ratings ${scale}`, reason: read.reason });
+      continue;
+    }
+    const projected = projectRatings(read.value, scale);
+    ratings.push(...projected.ratings);
+    skipped += projected.skipped;
+  }
+  return { ratings, skipped, unreadable };
+}
+
+/** Favourites + ratings for the planner, best effort (neither is needed to plan). */
+export async function readPersonal(client: HelloFreshClient): Promise<{
+  favoriteRecipeIds?: string[];
+  ratings: ProjectedRating[];
+  ratingsSkipped: number;
+  unreadable: Array<{ source: string; reason: string }>;
+}> {
+  const [favorites, rated] = await Promise.all([attempt(async () => projectFavorites(await client.listFavorites())), readRatings(client)]);
+  return {
+    ...(favorites.ok ? { favoriteRecipeIds: favorites.value.favorites.map((f) => f.recipeId) } : {}),
+    ratings: rated.ratings,
+    ratingsSkipped: rated.skipped,
+    unreadable: [...(favorites.ok ? [] : [{ source: 'favorites', reason: favorites.reason }]), ...rated.unreadable],
   };
 }
 

@@ -164,6 +164,22 @@
     {
       "name": "hf_cooking_plan",
       "description": "Order a week's picked meals for cooking, most perishable first (fish, shellfish, ... vegetarian last), with a suggested day, why, time, key ingredients and recipe card; read-only."
+    },
+    {
+      "name": "hf_list_favorites",
+      "description": "List the user's favourite recipes, named from a week's menu when given; read-only."
+    },
+    {
+      "name": "hf_list_ratings",
+      "description": "List the user's own recipe ratings (v2 / 5-star v3), parsed defensively; read-only."
+    },
+    {
+      "name": "hf_favorite_recipe",
+      "description": "Favourite a recipe from a week's menu; confirm-gated and verified."
+    },
+    {
+      "name": "hf_unfavorite_recipe",
+      "description": "Remove a recipe from the favourites; confirm-gated and verified."
     }
   ],
   "compatibility": {
