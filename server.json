@@ -57,6 +57,18 @@
           "description": "Path to a JSON file of meal-planner profiles. Defaults to ~/.config/hellofresh-mcp/profiles.json, read only when it exists.",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "HELLOFRESH_SESSION_FILE",
+          "description": "Where the HelloFresh session is kept across restarts (token set only, 0600). Defaults to .hellofresh-mcp/session.json under MCP_DATA_DIR, else HOME.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "HELLOFRESH_SESSION_CACHE",
+          "description": "on (default) keeps the session on disk across restarts; false keeps it in memory only.",
+          "isRequired": false,
+          "format": "string"
         }
       ]
     }

@@ -5,6 +5,7 @@ import { readWsPort } from './config.js';
 import { TOOL_REGISTRARS, type ToolDeps } from './tools/index.js';
 import { createProfileStore } from './profiles.js';
 import { HelloFreshSession } from './session.js';
+import { createSessionCache } from './session-cache.js';
 import { createHelloFreshBridge } from './transport.js';
 import { VERSION } from './version.js';
 
@@ -21,7 +22,9 @@ await bridge.start().catch(() => {});
 // Built ONCE, outside the registrars (runMcp builds a server per connection).
 // Nothing here resolves a credential at boot (deferred-config-error pattern).
 const fetchImpl: typeof fetch = (input, init) => fetch(input, init);
-const session = new HelloFreshSession({ bridge, fetchImpl });
+// The session survives a restart through a 0600 file (HELLOFRESH_SESSION_FILE;
+// HELLOFRESH_SESSION_CACHE=false keeps it in memory only). Opening it touches no disk.
+const session = new HelloFreshSession({ bridge, fetchImpl, persistence: createSessionCache() });
 const deps: ToolDeps = {
   bridge,
   session,

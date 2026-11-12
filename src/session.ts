@@ -25,9 +25,23 @@
 //       out). Only its ACCESS token is used, while still valid (and not
 //       rejected); otherwise the original bridge error is rethrown, its
 //       pairing hint intact. /gw/refresh is never called.
-//     A set read from the browser is never a fallback: its refresh token may
-//     already be spent by the browser. A missing cookie (signed out) is NOT a
-//     read failure and still fails.
+//     A set read from the browser is never refreshed as a fallback: its
+//     refresh token may already be spent by the browser. Its ACCESS token may
+//     stand in while still valid (and not rejected). A missing cookie (signed
+//     out) is NOT a read failure and still fails.
+//  6. Optional persistence (`src/session-cache.ts`) carries the newest set —
+//     and whether it is our own refresh and was written back — across a
+//     restart. It is loaded once, as if this process had just used it, so
+//     step 5's rules decide what a stored set may do: the browser's newer
+//     cookie still wins, a stored ACCESS token stands in while valid, and only
+//     our own never-written-back refresh token is ever POSTed without the
+//     browser. `user_data` (customer id, email) is never stored. Refreshing
+//     holds the store's cross-process lock and re-reads it first, so a sibling
+//     process (Claude Desktop beside Claude Code) that just refreshed is
+//     adopted instead of racing it with the same rotating refresh token. A
+//     rejected refresh clears the record (unless a sibling's newer one replaced
+//     it), so a dead session is not read back off disk. A store failure is
+//     logged and never fails a call.
 //
 // No token value is ever logged, put in an error message or returned.
 
@@ -45,6 +59,7 @@ import {
   type CachedTokenSource,
   type ReactiveTokenSource,
 } from '@chrischall/mcp-utils';
+import type { StatePersistence } from '@chrischall/mcp-utils/session';
 import { AUTH_COOKIE } from './transport.js';
 
 export const WEB_ORIGIN = 'https://www.hellofresh.com';
@@ -166,7 +181,7 @@ export function decodeAuthCookie(raw: string): AuthTokenSet {
   return parsed;
 }
 
-function isTokenSet(value: unknown): value is AuthTokenSet {
+export function isTokenSet(value: unknown): value is AuthTokenSet {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>;
   return typeof v['access_token'] === 'string' && v['access_token'] !== '' &&
@@ -188,8 +203,25 @@ export interface SessionBridge {
   writeAuthCookie(value: string): Promise<void>;
 }
 
+/** What survives a restart: the newest set (no `user_data`) and where it came from. */
+export interface PersistedSession {
+  set: AuthTokenSet;
+  /** This process's (or a sibling's) own refresh, not a set read from the browser. */
+  own: boolean;
+  /** For an own refresh: whether it reached the browser (which may then rotate it). */
+  writtenBack: boolean;
+}
+
+/** The record to store for `set`: never its `user_data` (customer id, email). */
+export function toPersistedSession(set: AuthTokenSet, from: { own: boolean; writtenBack: boolean }): PersistedSession {
+  const { user_data: _userData, ...rest } = set;
+  return { set: rest as AuthTokenSet, own: from.own, writtenBack: from.own && from.writtenBack };
+}
+
 export interface HelloFreshSessionOptions {
   bridge: SessionBridge;
+  /** Carries the session across restarts (`createSessionCache`). Absent: in-memory only. */
+  persistence?: StatePersistence<PersistedSession> | null;
   fetchImpl?: typeof fetch;
   /** Clock in ms (test seam). */
   now?: () => number;
@@ -214,6 +246,10 @@ export class HelloFreshSession implements ReactiveTokenSource {
   /** Whether that refresh was written back to the browser (which may then rotate it on its own). */
   private ownWrittenBack = false;
   private readonly seen: string[] = [];
+  /** The stored record is read once, on the first lifecycle. */
+  private restored = false;
+  /** Identity of what was last saved, to skip rewriting an unchanged record. */
+  private savedKey: string | undefined;
 
   constructor(private readonly opts: HelloFreshSessionOptions) {
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
@@ -296,11 +332,14 @@ export class HelloFreshSession implements ReactiveTokenSource {
       raw = await this.bridged(() => this.opts.bridge.readAuthCookie());
     } catch (err) {
       const ours = this.latest;
-      if (!ours || ours.refresh_token !== this.ownRefreshToken) throw err;
-      // Written back: the browser may have rotated (spent) its refresh token — use the access token only.
-      if (this.ownWrittenBack ? !this.fresh(ours) : !this.refreshable(ours)) throw err;
+      if (!ours) throw err;
+      // Only our own never-written-back refresh token is ours alone to spend; any
+      // other set (the browser's, or ours once written back) stands in by its
+      // still-valid access token only — the browser may have rotated its refresh token.
+      const ownUnwritten = ours.refresh_token === this.ownRefreshToken && !this.ownWrittenBack;
+      if (ownUnwritten ? !this.refreshable(ours) : !this.fresh(ours)) throw err;
       console.error(
-        `[hellofresh-mcp] could not read the browser session (${truncateErrorMessage(this.redact(messageOf(err)), 200)}); using this process's own refreshed session`,
+        `[hellofresh-mcp] could not read the browser session (${truncateErrorMessage(this.redact(messageOf(err)), 200)}); using the last session this server knew of`,
       );
       return ours;
     }
@@ -317,13 +356,43 @@ export class HelloFreshSession implements ReactiveTokenSource {
   }
 
   private async lifecycle(): Promise<AuthTokenSet> {
+    if (!this.restored) {
+      this.restored = true;
+      const stored = await this.loadStored();
+      if (stored) this.adopt(stored);
+    }
     const newest = await this.newestSet();
     if (this.fresh(newest)) {
-      this.latest = newest;
+      if (newest !== this.latest) {
+        this.latest = newest;
+        this.ownRefreshToken = undefined;
+      }
+      await this.persist();
       return newest;
     }
+    return this.locked(() => this.refreshLocked(newest));
+  }
 
-    const next = await this.refresh(newest);
+  /** Step 3, holding the store's cross-process lock. */
+  private async refreshLocked(newest: AuthTokenSet): Promise<AuthTokenSet> {
+    // A sibling process may have refreshed while we waited: take its set rather
+    // than POST a refresh token it has already spent.
+    const stored = await this.loadStored();
+    if (stored && stored.set.issued_at > newest.issued_at && this.fresh(stored.set)) {
+      this.adopt(stored);
+      return stored.set;
+    }
+
+    let next: AuthTokenSet;
+    try {
+      next = await this.refresh(newest);
+    } catch (err) {
+      // A dead session must not be read back off disk — unless a sibling's newer record replaced ours.
+      if (err instanceof HelloFreshSessionError && (!stored || stored.set.issued_at <= newest.issued_at)) {
+        await this.store('clear', () => this.opts.persistence?.clear?.());
+      }
+      throw err;
+    }
     this.latest = next;
     this.ownRefreshToken = next.refresh_token;
     this.ownWrittenBack = false;
@@ -338,7 +407,61 @@ export class HelloFreshSession implements ReactiveTokenSource {
         `[hellofresh-mcp] could not write the refreshed session back to the browser: ${truncateErrorMessage(this.redact(messageOf(err)), 200)}`,
       );
     }
+    await this.persist();
     return next;
+  }
+
+  /** Take a stored record as this process's newest known set. */
+  private adopt(stored: PersistedSession): void {
+    this.latest = stored.set;
+    this.ownRefreshToken = stored.own ? stored.set.refresh_token : undefined;
+    this.ownWrittenBack = stored.own && stored.writtenBack;
+    this.savedKey = this.keyOf(stored.set);
+    this.remember(stored.set);
+  }
+
+  private keyOf(set: AuthTokenSet): string {
+    const own = set.refresh_token === this.ownRefreshToken;
+    return `${set.access_token}\u0000${set.refresh_token}\u0000${own}\u0000${own && this.ownWrittenBack}`;
+  }
+
+  private async persist(): Promise<void> {
+    const set = this.latest;
+    if (!this.opts.persistence || !set) return;
+    const key = this.keyOf(set);
+    if (key === this.savedKey) return;
+    const own = set.refresh_token === this.ownRefreshToken;
+    const ok = await this.store('save', () =>
+      this.opts.persistence?.save(toPersistedSession(set, { own, writtenBack: this.ownWrittenBack })),
+    );
+    if (ok) this.savedKey = key;
+  }
+
+  private async loadStored(): Promise<PersistedSession | null> {
+    let stored: PersistedSession | null = null;
+    await this.store('load', async () => {
+      stored = (await this.opts.persistence?.load()) ?? null;
+    });
+    return stored;
+  }
+
+  private locked<T>(fn: () => Promise<T>): Promise<T> {
+    const store = this.opts.persistence;
+    return store?.withLock ? store.withLock(fn) : fn();
+  }
+
+  /** Run a store operation; a failure is logged (redacted), never thrown. */
+  private async store(op: 'load' | 'save' | 'clear', fn: () => unknown): Promise<boolean> {
+    try {
+      await fn();
+      return true;
+    } catch (err) {
+      console.error(
+        `[hellofresh-mcp] could not ${op} the ${op === 'load' ? 'saved ' : ''}HelloFresh session on disk ` +
+          `(${truncateErrorMessage(this.redact(messageOf(err)), 200)}); continuing without it.`,
+      );
+      return false;
+    }
   }
 
   private async bridged<T>(fn: () => Promise<T>): Promise<T> {

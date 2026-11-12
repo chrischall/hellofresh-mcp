@@ -39,7 +39,9 @@
         "MCP_CONFIRM_ELICITATION": "${user_config.confirm_elicitation}",
         "HELLOFRESH_DEBUG": "${user_config.debug}",
         "HELLOFRESH_PROFILES": "${user_config.profiles}",
-        "HELLOFRESH_PROFILES_FILE": "${user_config.profiles_file}"
+        "HELLOFRESH_PROFILES_FILE": "${user_config.profiles_file}",
+        "HELLOFRESH_SESSION_FILE": "${user_config.session_file}",
+        "HELLOFRESH_SESSION_CACHE": "${user_config.session_cache}"
       }
     }
   },
@@ -85,6 +87,18 @@
       "type": "string",
       "title": "Planner profiles file (optional)",
       "description": "Optional. Path to a JSON file of meal-planner profiles. Defaults to ~/.config/hellofresh-mcp/profiles.json (used only when it exists).",
+      "required": false
+    },
+    "session_file": {
+      "type": "string",
+      "title": "Session file (optional)",
+      "description": "Optional. Where the HelloFresh session is kept so it survives a restart (the token set only, never your id or email; file mode 0600). Defaults to ~/.hellofresh-mcp/session.json. Leave blank for the default.",
+      "required": false
+    },
+    "session_cache": {
+      "type": "string",
+      "title": "Keep the session across restarts (optional)",
+      "description": "Optional. \"false\" keeps the HelloFresh session in memory only, so every start reads it from the browser again. Defaults to on. Leave blank for the default.",
       "required": false
     }
   },

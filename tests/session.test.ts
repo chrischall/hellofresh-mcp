@@ -11,8 +11,10 @@ import {
   encodeAuthCookie,
   tokenExpiresAtMs,
   type AuthTokenSet,
+  type PersistedSession,
   type SessionBridge,
 } from '../src/session.js';
+import type { StatePersistence } from '@chrischall/mcp-utils/session';
 
 // Synthetic values only — never a real token, customer id or email.
 const NOW_S = 1_800_000_000;
@@ -45,6 +47,7 @@ function harness(opts: {
   cookie?: string | undefined | (() => Promise<string | undefined>);
   refresh?: (body: string) => Response | Promise<Response>;
   write?: (value: string) => Promise<void>;
+  persistence?: StatePersistence<PersistedSession>;
 }): Harness {
   const clock = { now: NOW_MS };
   const cookieState = { value: 'cookie' in opts ? opts.cookie : cookieOf(tokenSet()) };
@@ -68,6 +71,7 @@ function harness(opts: {
     bridge: bridge as unknown as SessionBridge,
     fetchImpl: fetchImpl as unknown as typeof fetch,
     now: () => clock.now,
+    persistence: opts.persistence,
   });
   return { session, bridge, fetchImpl, clock };
 }
@@ -624,5 +628,222 @@ describe('HelloFreshSession.withAuth (401 replay)', () => {
     h.session.invalidate('something-else');
     await h.session.getToken();
     expect(h.bridge.readAuthCookie).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** An in-memory StatePersistence that records what it was given. */
+function memoryStore(initial: PersistedSession | null = null, over: Partial<StatePersistence<PersistedSession>> = {}) {
+  const state = { value: initial, saves: [] as PersistedSession[], cleared: 0, locks: 0, loads: 0 };
+  const store: StatePersistence<PersistedSession> = {
+    load: () => {
+      state.loads++;
+      return state.value === null ? null : structuredClone(state.value);
+    },
+    save: (v) => {
+      state.value = structuredClone(v);
+      state.saves.push(structuredClone(v));
+    },
+    clear: () => {
+      state.value = null;
+      state.cleared++;
+    },
+    withLock: async (fn) => {
+      state.locks++;
+      return fn();
+    },
+    ...over,
+  };
+  return { store, state };
+}
+
+const record = (set: AuthTokenSet, own: boolean, writtenBack: boolean): PersistedSession => {
+  const { user_data: _drop, ...rest } = set;
+  return { set: rest as AuthTokenSet, own, writtenBack };
+};
+
+describe('HelloFreshSession persistence (surviving a restart)', () => {
+  it('saves the browser set it used — without user_data — and loads the store only once', async () => {
+    const { store, state } = memoryStore();
+    const h = harness({ persistence: store });
+    await h.session.getToken();
+    (h.session as unknown as { source: { invalidate(): void } }).source.invalidate();
+    await h.session.getToken();
+    expect(state.value).toEqual(record(tokenSet(), false, false));
+    expect(state.value!.set).not.toHaveProperty('user_data');
+    expect(state.loads).toBe(1);
+  });
+
+  it('does not rewrite an unchanged record', async () => {
+    const { store, state } = memoryStore(record(tokenSet(), false, false));
+    const h = harness({ persistence: store });
+    await h.session.getToken();
+    expect(state.saves).toHaveLength(0);
+  });
+
+  it('saves its own refresh, marked written back (or not)', async () => {
+    const ok = memoryStore();
+    await harness({ cookie: cookieOf(tokenSet({ issued_at: NOW_S - 1800 })), refresh: () => refreshed(), persistence: ok.store }).session.getToken();
+    expect(ok.state.value).toMatchObject({ own: true, writtenBack: true, set: { refresh_token: 'refresh-NEW' } });
+
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failed = memoryStore();
+    await harness({
+      cookie: cookieOf(tokenSet({ issued_at: NOW_S - 1800 })),
+      refresh: () => refreshed(),
+      write: async () => Promise.reject(new Error('extension offline')),
+      persistence: failed.store,
+    }).session.getToken();
+    expect(failed.state.value).toMatchObject({ own: true, writtenBack: false, set: { refresh_token: 'refresh-NEW' } });
+    expect(failed.state.locks).toBe(1);
+    vi.restoreAllMocks();
+  });
+
+  it('after a restart with the bridge up, a newer browser set wins over the stored one', async () => {
+    const { store } = memoryStore(record(tokenSet({ access_token: 'access-OLD', issued_at: NOW_S - 600 }), false, false));
+    const h = harness({ persistence: store });
+    await expect(h.session.getToken()).resolves.toBe('access-AAA');
+  });
+
+  it('after a restart with the bridge up, OUR unwritten refresh beats the (spent) older cookie', async () => {
+    const ours = tokenSet({ access_token: 'access-OURS', refresh_token: 'refresh-OURS', issued_at: NOW_S - 100 });
+    const { store } = memoryStore(record(ours, true, false));
+    const h = harness({ cookie: cookieOf(tokenSet({ issued_at: NOW_S - 1800 })), persistence: store });
+    await expect(h.session.getToken()).resolves.toBe('access-OURS');
+    expect(h.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  describe('restart with the bridge down', () => {
+    const down = async () => Promise.reject(new Error('tab closed'));
+
+    it('a stored access token that is still valid is used (from any source); nothing is refreshed', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      for (const [own, writtenBack] of [[false, false], [true, true], [true, false]] as const) {
+        const { store } = memoryStore(record(tokenSet(), own, writtenBack));
+        const h = harness({ cookie: down, persistence: store });
+        await expect(h.session.getToken()).resolves.toBe('access-AAA');
+        expect(h.fetchImpl).not.toHaveBeenCalled();
+      }
+      vi.restoreAllMocks();
+    });
+
+    it('a stale stored set from the browser is not refreshed: the bridge error surfaces', async () => {
+      const { store } = memoryStore(record(tokenSet({ issued_at: NOW_S - 1800 }), false, false));
+      const h = harness({ cookie: down, refresh: () => refreshed(), persistence: store });
+      await expect(h.session.getToken()).rejects.toBeInstanceOf(HelloFreshBridgeError);
+      expect(h.fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('a stale stored refresh of ours that WAS written back is not refreshed (the browser may have rotated it)', async () => {
+      const { store } = memoryStore(record(tokenSet({ issued_at: NOW_S - 1800 }), true, true));
+      const h = harness({ cookie: down, refresh: () => refreshed(), persistence: store });
+      await expect(h.session.getToken()).rejects.toBeInstanceOf(HelloFreshBridgeError);
+      expect(h.fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('a stale stored refresh of ours that was NEVER written back is refreshed (only we hold it), and the new set saved', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { store, state } = memoryStore(record(tokenSet({ issued_at: NOW_S - 1800 }), true, false));
+      const bodies: string[] = [];
+      const h = harness({
+        cookie: down,
+        refresh: (body) => {
+          bodies.push(body);
+          return refreshed();
+        },
+        persistence: store,
+      });
+      await expect(h.session.getToken()).resolves.toBe('access-NEW');
+      expect(JSON.parse(bodies[0]!).refresh_token).toBe('refresh-RRR');
+      expect(h.bridge.writeAuthCookie).toHaveBeenCalledTimes(1);
+      expect(state.value).toMatchObject({ own: true, writtenBack: true, set: { refresh_token: 'refresh-NEW' } });
+      vi.restoreAllMocks();
+    });
+
+    it('nothing stored: the bridge error surfaces as before', async () => {
+      const h = harness({ cookie: down, persistence: memoryStore().store });
+      await expect(h.session.getToken()).rejects.toBeInstanceOf(HelloFreshBridgeError);
+    });
+  });
+
+  it('a rejected refresh clears the stored session (no expiry loop off disk)', async () => {
+    const { store, state } = memoryStore();
+    const h = harness({
+      cookie: cookieOf(tokenSet({ issued_at: NOW_S - 1800 })),
+      refresh: () => json({ error: 'invalid_grant' }, 400),
+      persistence: store,
+    });
+    await expect(h.session.getToken()).rejects.toBeInstanceOf(HelloFreshSessionError);
+    expect(state.cleared).toBe(1);
+  });
+
+  it('a rejected refresh leaves a NEWER sibling record alone', async () => {
+    const sibling = record(tokenSet({ access_token: 'access-SIB', refresh_token: 'refresh-SIB', issued_at: NOW_S - 1790 }), true, false);
+    const { store, state } = memoryStore(null, {
+      // A sibling process saved its own refresh while we waited for the lock (stale by the time we read it).
+      withLock: async (fn) => {
+        state.value = sibling;
+        return fn();
+      },
+    });
+    const h = harness({
+      cookie: cookieOf(tokenSet({ issued_at: NOW_S - 1800 })),
+      refresh: () => json({ error: 'invalid_grant' }, 400),
+      persistence: store,
+    });
+    await expect(h.session.getToken()).rejects.toBeInstanceOf(HelloFreshSessionError);
+    expect(state.cleared).toBe(0);
+    expect(state.value).toEqual(sibling);
+  });
+
+  it('a sibling process that refreshed while we waited for the lock is adopted — no second refresh', async () => {
+    const sibling = record(tokenSet({ access_token: 'access-SIB', refresh_token: 'refresh-SIB', issued_at: NOW_S }), true, false);
+    const { store, state } = memoryStore(null, {
+      withLock: async (fn) => {
+        state.value = sibling;
+        return fn();
+      },
+    });
+    const h = harness({
+      cookie: cookieOf(tokenSet({ issued_at: NOW_S - 1800 })),
+      refresh: () => refreshed(),
+      persistence: store,
+    });
+    await expect(h.session.getToken()).resolves.toBe('access-SIB');
+    expect(h.fetchImpl).not.toHaveBeenCalled();
+    // It is the sibling's unwritten refresh: with the bridge gone it may stand in, refreshable.
+    expect(h.session.expiresInMinutes()).toBe(30);
+  });
+
+  it('works with a store that has no lock or clear', async () => {
+    const { store, state } = memoryStore(null, { withLock: undefined, clear: undefined });
+    const h = harness({
+      cookie: cookieOf(tokenSet({ issued_at: NOW_S - 1800 })),
+      refresh: () => json({ error: 'invalid_grant' }, 400),
+      persistence: store,
+    });
+    await expect(h.session.getToken()).rejects.toBeInstanceOf(HelloFreshSessionError);
+    expect(state.value).toBeNull();
+  });
+
+  it('a failing store is reported on stderr (no token values) and never fails the call', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const h = harness({
+      cookie: cookieOf(tokenSet({ issued_at: NOW_S - 1800 })),
+      refresh: () => refreshed(),
+      persistence: {
+        load: () => {
+          throw new Error('EACCES');
+        },
+        save: () => {
+          throw new Error('EROFS refresh-NEW');
+        },
+      },
+    });
+    await expect(h.session.getToken()).resolves.toBe('access-NEW');
+    const logged = errors.mock.calls.flat().join('\n');
+    expect(logged).toMatch(/could not load the saved HelloFresh session/);
+    expect(logged).toMatch(/could not save the HelloFresh session/);
+    expect(logged).not.toMatch(/access-|refresh-/);
+    errors.mockRestore();
   });
 });

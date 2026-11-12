@@ -182,6 +182,8 @@ describe('env var docs', () => {
         'MCP_CONFIRM_ELICITATION',
         'HELLOFRESH_PROFILES',
         'HELLOFRESH_PROFILES_FILE',
+        'HELLOFRESH_SESSION_FILE',
+        'HELLOFRESH_SESSION_CACHE',
         'MCP_USER_TZ',
       ]),
     );

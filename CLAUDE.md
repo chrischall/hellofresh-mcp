@@ -31,6 +31,10 @@ npm run test:coverage  # 100% thresholds, run by CI
   `encodeAuthCookie` in `src/session.ts`) or the browser is signed out. The
   lifecycle (cache → browser cookie → refresh + write-back, 401 replay once) is
   in `src/session.ts`; read its header before touching it.
+- The session survives restarts through `src/session-cache.ts` (one 0600 file,
+  `user_data` stripped, cross-process lock around a refresh). A STORED refresh
+  token is POSTed without the browser only when it is our own and its
+  write-back failed — any other may already be rotated by the browser.
 - Changing the bridge's declared scope (cookie `apiV2Auth`, cookie write)
   forces every user to re-pair.
 - No token value may appear in an error, result or log (`redactValues`).
