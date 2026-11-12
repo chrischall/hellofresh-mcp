@@ -158,3 +158,27 @@ export interface RawCalculation {
   currency?: string;
   products?: Array<{ couponPercent?: number; couponCode?: string | null }> | null;
 }
+
+/** `GET /gw/recipes/recipes/{id}` (docs/HELLOFRESH-API.md "Recipe detail"). Third-party text throughout. */
+export interface RawRecipeDetail {
+  id?: string;
+  name?: string;
+  headline?: string;
+  description?: string;
+  /** HelloFresh's difficulty level (1 = easiest). */
+  difficulty?: number | string | null;
+  prepTime?: string;
+  totalTime?: string;
+  category?: { name?: string } | null;
+  allergens?: Array<{ name?: string }> | null;
+  /** Per serving. */
+  nutrition?: Array<{ name?: string; amount?: number | null; unit?: string }> | null;
+  ingredients?: Array<{ id?: string; name?: string; shipped?: boolean }> | null;
+  /** Amounts per box size, joined to `ingredients` on id; `amount` may be null. */
+  yields?: Array<{ yields?: number; ingredients?: Array<{ id?: string; amount?: number | null; unit?: string }> | null }> | null;
+  steps?: Array<{ index?: number; instructions?: string; instructionsHTML?: string }> | null;
+  /** Shape not pinned down in the docs: a name or `{name}`. */
+  utensils?: Array<string | { name?: string }> | null;
+  cardLink?: string | null;
+  websiteUrl?: string | null;
+}

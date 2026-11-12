@@ -159,6 +159,8 @@ Read tools take `view: compact | full` (default `compact`). A box `price` with `
 | `hf_change_delivery_schedule` | Permanently change the regular delivery slot and/or frequency (every 1–4 weeks). Confirm-gated, verified. |
 | `hf_list_profiles` | The meal-planner profiles (servings, meals, allowed categories, preferences, premium cap) and where they were loaded from. Local config only. |
 | `hf_suggest_meals` | Ranked picks for a week and a planner profile (e.g. a 4-person kid-friendly week), skipping recent repeats and favouring varied proteins: the top picks plus 2 alternates per slot, with reasons. Read-only. |
+| `hf_get_recipe` | One meal's full recipe by week + menu index (protein swaps say which protein they swap in): time, difficulty, allergens, nutrition per serving, ingredient amounts for the week's servings (nearest listed yield otherwise, flagged), plain-text steps, utensils, recipe card PDF and web page. Recipe text is framed as untrusted third-party content. Read-only. |
+| `hf_cooking_plan` | A week's picked meals in a recommended cook order — fish, shellfish, other seafood, poultry, ground meat, whole cuts of beef/pork/lamb, vegetarian last; ties by shorter time — each with a suggested day from the delivery date, why, total time, key ingredients and recipe card. Read-only. |
 | `hf_weekly_plan` | One read to approve a week: box size needed vs current, suggested picks, the box price for the size it needs (HelloFresh's checkout total + premiums, or a labelled estimate), a one-line summary, and the exact follow-up write calls in order (never a resize of the first box, which keeps its size — see `notes`). Read-only. |
 
 ## Limits

@@ -7,6 +7,7 @@ import type { HelloFreshClient } from '../client.js';
 import type { HelloFreshSession } from '../session.js';
 import type { HelloFreshBridge } from '../transport.js';
 import type { LoadedProfiles } from '../profiles.js';
+import { registerCookingTools } from './cooking.js';
 import { registerHealthcheckTool } from './healthcheck.js';
 import { registerPlannerTools } from './planner.js';
 import { registerReadTools } from './reads.js';
@@ -36,4 +37,5 @@ export const TOOL_REGISTRARS: readonly ToolRegistrar[] = [
   registerReadTools,
   registerWriteTools,
   registerPlannerTools,
+  registerCookingTools,
 ];

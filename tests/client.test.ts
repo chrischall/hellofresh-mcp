@@ -100,6 +100,15 @@ describe('HelloFreshClient reads', () => {
     );
   });
 
+  it('reads a recipe detail by recipe id with country/locale, the id encoded as one segment', async () => {
+    const { client, calls } = setup([json({ name: 'R' }), json({})]);
+    await expect(client.getRecipe('6a50d4c1748b7cf792501852')).resolves.toEqual({ name: 'R' });
+    expect(calls[0]!.url).toBe(`${API_BASE}/recipes/recipes/6a50d4c1748b7cf792501852?country=US&locale=en-US`);
+    expect(calls[0]!.method).toBe('GET');
+    await client.getRecipe('x/y');
+    expect(calls[1]!.url).toBe(`${API_BASE}/recipes/recipes/x%2Fy?country=US&locale=en-US`);
+  });
+
   it('encodes path values as one segment', async () => {
     const { client, calls } = setup([json({})]);
     await client.getSubscription('a/b?c');

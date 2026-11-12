@@ -15,7 +15,7 @@ import {
   type ProjectedMenu,
   type SelectedMeal,
 } from '../normalize.js';
-import type { RawSubscription } from '../types.js';
+import type { RawDeliveryMenu, RawSubscription } from '../types.js';
 import { WEEK_PATTERN } from '../weeks.js';
 
 // ---- parameters -----------------------------------------------------------------
@@ -87,6 +87,26 @@ export async function customerPlanIdOf(client: HelloFreshClient, account: Accoun
   return plan.id;
 }
 
+/** The week's RAW menu for the delivery's box size (recipe ids included). */
+export async function readRawMenu(
+  client: HelloFreshClient,
+  account: Account,
+  delivery: Pick<ProjectedDelivery, 'week' | 'sku' | 'servings'>,
+  week: string,
+): Promise<RawDeliveryMenu> {
+  if (!delivery.sku || !delivery.servings) {
+    throw new McpToolError(`HelloFresh returned no box size for ${week}, so its menu cannot be read.`);
+  }
+  const customerPlanId = await customerPlanIdOf(client, account);
+  return client.getDeliveryMenu({
+    subscriptionId: account.subscriptionId,
+    week,
+    servings: delivery.servings,
+    sku: delivery.sku,
+    customerPlanId,
+  });
+}
+
 /** The week's menu for the delivery's box size. */
 export async function readMenu(
   client: HelloFreshClient,
@@ -94,18 +114,7 @@ export async function readMenu(
   delivery: Pick<ProjectedDelivery, 'week' | 'sku' | 'servings'>,
   week: string,
 ): Promise<ProjectedMenu> {
-  if (!delivery.sku || !delivery.servings) {
-    throw new McpToolError(`HelloFresh returned no box size for ${week}, so its menu cannot be read.`);
-  }
-  const customerPlanId = await customerPlanIdOf(client, account);
-  const menu = await client.getDeliveryMenu({
-    subscriptionId: account.subscriptionId,
-    week,
-    servings: delivery.servings,
-    sku: delivery.sku,
-    customerPlanId,
-  });
-  return projectMenu(menu);
+  return projectMenu(await readRawMenu(client, account, delivery, week));
 }
 
 /** One week's picks, as hf_recent_picks lists them. */

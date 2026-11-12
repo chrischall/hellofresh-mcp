@@ -45,6 +45,7 @@ import type {
   RawDelivery,
   RawCalculation,
   RawDeliveryMenu,
+  RawRecipeDetail,
   RawSubscription,
 } from './types.js';
 
@@ -259,6 +260,11 @@ export class HelloFreshClient {
       throw new McpToolError(`${SERVICE}'s price calculator answered without a grand total.`, { kind: 'http' });
     }
     return projectCalculation(raw);
+  }
+
+  /** Recipe detail by the menu meal's `recipe.id` (docs/HELLOFRESH-API.md "Recipe detail"). */
+  getRecipe(recipeId: string): Promise<RawRecipeDetail> {
+    return this.request('GET', apiPath`/recipes/recipes/${recipeId}`);
   }
 
   // ---- writes (docs/HELLOFRESH-API.md "Writes" 1–5, 3 split into 3a size / 3b day) -------------------------
