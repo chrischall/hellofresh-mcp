@@ -205,6 +205,17 @@ describe('hf_suggest_meals', () => {
     expect(premium.premiumBoxCents).toBe(premium.premiumPerServingCents * 2);
   });
 
+  it('recent weeks before the first delivery week had no box: not read, not unreadable', async () => {
+    const { out, urls } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'couple', avoid_recent_weeks: 2 }, [
+      [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W49', firstBoxDelivered: false }] }],
+      [/\/delivery_dates\/2026-W4[78]$/, () => json({ errorMessage: 'nope' }, 404)],
+    ]);
+    expect(out.recentPicks.weeks).toEqual(['2026-W47', '2026-W48']);
+    expect(out.recentPicks.unreadable).toBeUndefined();
+    expect(out.recentPicks.avoidedNames).toEqual([]);
+    expect(urls.some((u: URL) => /delivery_dates\/2026-W4[78]$/.test(u.pathname))).toBe(false);
+  });
+
   it('a protein swap that fits where its course does not carries its base course index', async () => {
     const poultry: LoadedProfiles = { source: 'x', profiles: [{ ...PROFILES.profiles[0]!, name: 'poultry', categories: ['Poultry'] }] };
     const { out } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'poultry', avoid_recent_weeks: 0 }, [], NOW, () => poultry);

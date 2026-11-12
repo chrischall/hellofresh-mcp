@@ -23,6 +23,12 @@
           "format": "string"
         },
         {
+          "name": "MCP_USER_TZ",
+          "description": "Your IANA time zone (e.g. America/New_York), used for \"this week\" in hf_recent_picks. Defaults to the system zone.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
           "name": "HELLOFRESH_DEBUG",
           "description": "Truthy logs the fetchproxy bridge's role and lifecycle to stderr.",
           "isRequired": false,

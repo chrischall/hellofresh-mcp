@@ -366,7 +366,8 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
       description:
         'List the HelloFresh meals picked in recent weeks — the current week and the weeks_back weeks before it — ' +
         'to avoid repeating a recipe. Best effort: each week’s menu is read separately, and weeks that cannot be ' +
-        'read are listed with the reason.',
+        'read are listed with the reason. Weeks before the subscription’s first delivery week had no box ' +
+        '(status no_box).',
       annotations: readOnly('HelloFresh: recent picks'),
       _meta: foodMeta('lookup', { aliases: ['recent hellofresh meals', 'what did we have'] }),
       inputSchema: z.object({
@@ -384,6 +385,7 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
       const { weeks: read, recipeNames, unreadable } = await readPicks(client, account, weeks);
       return minifiedResult({
         throughWeek: through,
+        ...(read.some((w) => w.status === 'no_box') ? { firstDeliveryWeek: account.subscription.firstDeliveryWeek } : {}),
         weeks: read,
         recipeNames,
         ...(unreadable.length > 0 ? { unreadable } : {}),

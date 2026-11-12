@@ -110,23 +110,29 @@ export async function readMenu(
 /** One week's picks, as hf_recent_picks lists them. */
 export interface WeekPicks {
   week: string;
-  status: ProjectedDelivery['status'];
+  /** `no_box`: the week is before the subscription's first delivery week, so it had no box (and is never read). */
+  status: ProjectedDelivery['status'] | 'no_box';
   deliveryDate?: string;
   picks: ReturnType<typeof compactSelection>[];
 }
 
 /**
- * The picks of each week, best effort: a skipped week has none (and reads no
- * menu); a week whose delivery or menu cannot be read is listed in
- * `unreadable` with the reason. `recipeNames` are the distinct picked names.
+ * The picks of each week, best effort: a week before the subscription's
+ * `firstDeliveryWeek` had no box (`no_box`, nothing is read); a skipped week
+ * has none (and reads no menu); a week whose delivery or menu cannot be read
+ * is listed in `unreadable` with the reason. `recipeNames` are the distinct
+ * picked names.
  */
 export async function readPicks(
   client: HelloFreshClient,
   account: Account,
   weeks: readonly string[],
 ): Promise<{ weeks: WeekPicks[]; recipeNames: string[]; unreadable: Array<{ week: string; reason: string }> }> {
+  const first = account.subscription.firstDeliveryWeek;
+  // ISO weeks (YYYY-Www) order as strings.
+  const hadNoBox = (week: string) => !!first && week < first;
   const results = await Promise.all(
-    weeks.map(async (week) => {
+    weeks.filter((week) => !hadNoBox(week)).map(async (week) => {
       const read = await attempt(async () => {
         const delivery = projectDelivery(await client.getDelivery(account.subscriptionId, week));
         if (delivery.status === 'skipped') return { delivery, picks: [] as WeekPicks['picks'] };
@@ -139,8 +145,9 @@ export async function readPicks(
   const read = results.flatMap(({ week, read: r }): WeekPicks[] =>
     r.ok ? [{ week, status: r.value.delivery.status, deliveryDate: dateOf(r.value.delivery.deliveryDate), picks: r.value.picks }] : [],
   );
+  const noBox = weeks.filter(hadNoBox).map((week): WeekPicks => ({ week, status: 'no_box', picks: [] }));
   return {
-    weeks: read,
+    weeks: [...noBox, ...read].sort(byWeek),
     recipeNames: [...new Set(read.flatMap((w) => w.picks.map((p) => p.name)).filter((n): n is string => !!n))],
     unreadable: results.flatMap(({ week, read: r }) => (r.ok ? [] : [{ week, reason: r.reason }])),
   };

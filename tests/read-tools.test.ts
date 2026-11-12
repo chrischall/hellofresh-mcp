@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createTestHarness, parseToolResult, type TestHarness } from '@chrischall/mcp-utils/test';
 import type { CallToolResult } from '@modelcontextprotocol/server';
@@ -46,7 +46,7 @@ afterEach(async () => {
 /** 2026-11-26 (a Thursday in 2026-W48), noon UTC. */
 const NOW = Date.parse('2026-11-26T17:00:00Z');
 
-async function call(name: string, args: Record<string, unknown> = {}, routes: Route[] = []) {
+async function call(name: string, args: Record<string, unknown> = {}, routes: Route[] = [], now = NOW) {
   const urls: URL[] = [];
   const all = [...routes, ...defaultRoutes()];
   const fetchImpl = (async (input: string) => {
@@ -61,7 +61,7 @@ async function call(name: string, args: Record<string, unknown> = {}, routes: Ro
   const deps: ToolDeps = {
     ...offlineDeps(),
     client: new HelloFreshClient({ session, fetchImpl }),
-    now: () => NOW,
+    now: () => now,
   };
   await harness?.close();
   harness = await createTestHarness((server) => registerReadTools(server, deps));
@@ -608,6 +608,49 @@ describe('hf_recent_picks', () => {
     expect(out.weeks.map((w: Any) => w.week)).toEqual(['2026-W44', '2026-W45', '2026-W46', '2026-W47', '2026-W48']);
     expect(out.unreadable).toBeUndefined();
     expect(urls.filter((u) => u.pathname.includes('/delivery_dates/'))).toHaveLength(5);
+  });
+
+  it('weeks before the subscription\'s first delivery week are "no box" (never read), not unreadable', async () => {
+    const { result, urls } = await call('hf_recent_picks', { weeks_back: 3, through_week: '2026-W49' }, [
+      [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W48' }] }],
+      [/delivery_dates\/2026-W48$/, week('2026-W48', { status: 'PAUSED' })],
+    ]);
+    const out = parseToolResult<Any>(result);
+    expect(out.weeks.map((w: Any) => [w.week, w.status])).toEqual([
+      ['2026-W46', 'no_box'],
+      ['2026-W47', 'no_box'],
+      ['2026-W48', 'skipped'],
+      ['2026-W49', 'running'],
+    ]);
+    expect(out.weeks[0].picks).toEqual([]);
+    expect(out.firstDeliveryWeek).toBe('2026-W48');
+    expect(out.unreadable).toBeUndefined();
+    const read = urls.filter((u) => u.pathname.includes('/delivery_dates/')).map((u) => u.pathname.slice(-8)).sort();
+    expect(read).toEqual(['2026-W48', '2026-W49']);
+  });
+
+  it('a genuine failure ON or after the first delivery week is still unreadable', async () => {
+    const { result } = await call('hf_recent_picks', { weeks_back: 1, through_week: '2026-W49' }, [
+      [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W48' }] }],
+      [/delivery_dates\/2026-W48$/, () => json({ errorMessage: 'not found' }, 404)],
+    ]);
+    const out = parseToolResult<Any>(result);
+    expect(out.unreadable.map((u: Any) => u.week)).toEqual(['2026-W48']);
+    expect(out.weeks.map((w: Any) => w.week)).toEqual(['2026-W49']);
+  });
+
+  it('the current week honours MCP_USER_TZ (the user\'s wall-clock date, not UTC)', async () => {
+    // Monday 2026-11-30 03:00 UTC is still Sunday evening in New York: 2026-W48 there, 2026-W49 in UTC.
+    const instant = Date.parse('2026-11-30T03:00:00Z');
+    const routes: Route[] = [[/delivery_dates\//, () => json({ status: 'PAUSED' })]];
+    try {
+      vi.stubEnv('MCP_USER_TZ', 'America/New_York');
+      expect(parseToolResult<Any>((await call('hf_recent_picks', { weeks_back: 0 }, routes, instant)).result).throughWeek).toBe('2026-W48');
+      vi.stubEnv('MCP_USER_TZ', 'UTC');
+      expect(parseToolResult<Any>((await call('hf_recent_picks', { weeks_back: 0 }, routes, instant)).result).throughWeek).toBe('2026-W49');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('a week with no box size is unreadable', async () => {

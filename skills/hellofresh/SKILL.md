@@ -49,7 +49,8 @@ means the browser may be signed out: same remedy.
   delivery and cutoff, voucher. Never name, email, address or payment.
 - `hf_list_box_sizes` — the box sizes (meals × people) the plan can switch to.
 - `hf_recent_picks` `{weeks_back}` — what was picked in recent weeks, to avoid
-  repeats; it names any week it could not read.
+  repeats; it names any week it could not read, and weeks before the first
+  delivery show as `no_box` (they had no box — not a read failure).
 
 Reads take `view`: `compact` (default) is enough to decide; ask for `full` only
 for a field compact leaves out. Prices are estimates: HelloFresh has no single
