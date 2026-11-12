@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/chrischall/hellofresh-mcp/compare/v0.1.0...v0.2.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* hf_list_deliveries, hf_get_delivery and hf_weekly_plan renamed their price keys — `estimate` → `price`, `estimateNote` → `priceNote`, `estimateWarning` → `priceWarning` — and every price is now US dollars (`subTotal`, `discount`, `grandTotal`, `totalWithPremiums`); the cent fields `subtotalCents`, `discountCents` and `totalCents` are gone.
+
+### Features
+
+* real box prices, cooking-day plan, favorites, multi-week planning and promo tracker ([8a2012b](https://github.com/chrischall/hellofresh-mcp/commit/8a2012bce5d02b7702cb3d76a6e3156449f90bc6))
+
 ## 0.1.0 (2026-11-12)
 
 

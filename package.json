@@ -1,6 +1,6 @@
 {
   "name": "@chrischall/hellofresh-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "mcpName": "io.github.chrischall/hellofresh-mcp",
   "description": "Unofficial HelloFresh (US) MCP server for Claude — subscription, weekly deliveries, menus, meal picks, skips and box sizes — developed and maintained by AI (Claude Code)",
