@@ -137,15 +137,15 @@ After sending, each write re-reads HelloFresh and reports `status: "verified"` o
 
 ## Tools
 
-Read tools take `view: compact | full` (default `compact`). Money is US cents; prices are estimates (HelloFresh has no single "box total" read, and premiums multiply by servings).
+Read tools take `view: compact | full` (default `compact`). A box `price` with `source: "hellofresh"` is HelloFresh's own checkout total (US dollars: voucher, shipping and tax applied) from its price calculator, read through the browser tab; that calculator leaves premium recipe charges out, so `premiumUpcharge` reports them separately and `totalWithPremiums` adds them. When the calculator cannot be read, `price` falls back to a local estimate (`source: "estimate"`, US cents, with the `reason`). Menu premiums are US cents and multiply by servings.
 
 
 | Tool | What it does |
 | --- | --- |
 | `hf_healthcheck` | Check the ContextMint Bridge link, the HelloFresh session token and a subscriptions probe (status only). |
 | `hf_get_subscription` | The subscription: box size, price, preset, delivery slot and frequency, next delivery and cutoff, voucher. Never name, email, address or payment. |
-| `hf_list_deliveries` | Upcoming delivery weeks: dates, cutoff, status, box size, estimated total with the voucher discount. `view: "brief"` gives one line per week. |
-| `hf_get_delivery` | One delivery week: dates, status, box size, current meal picks, allowed actions, alternative days, estimated total including premiums. |
+| `hf_list_deliveries` | Upcoming delivery weeks: dates, cutoff, status, box size and each running week's box price (HelloFresh's checkout total + premiums, or a labelled estimate). `view: "brief"` gives one line per week. |
+| `hf_get_delivery` | One delivery week: dates, status, box size, current meal picks, allowed actions, alternative days, and the box price (HelloFresh's checkout total + premiums, or a labelled estimate). |
 | `hf_get_menu` | A week's menu at its box size, with `seafood_only`, `kid_friendly`, `max_minutes`, `max_premium_per_serving` and `selected_only` filters and protein swaps. |
 | `hf_list_box_sizes` | The box sizes (meals × people) the subscription can switch to, the current one marked. |
 | `hf_recent_picks` | Meals picked in recent weeks (best effort; unreadable weeks are named), to avoid repeating a recipe. |
@@ -158,7 +158,7 @@ Read tools take `view: compact | full` (default `compact`). Money is US cents; p
 | `hf_change_delivery_schedule` | Permanently change the regular delivery slot and/or frequency (every 1–4 weeks). Confirm-gated, verified. |
 | `hf_list_profiles` | The meal-planner profiles (servings, meals, allowed categories, preferences, premium cap) and where they were loaded from. Local config only. |
 | `hf_suggest_meals` | Ranked picks for a week and a planner profile (e.g. a 4-person kid-friendly week), skipping recent repeats and favouring varied proteins: the top picks plus 2 alternates per slot, with reasons. Read-only. |
-| `hf_weekly_plan` | One read to approve a week: box size needed vs current, suggested picks, estimated total and voucher warning, a one-line summary, and the exact follow-up write calls in order (never a resize of the first box, which keeps its size — see `notes`). Read-only. |
+| `hf_weekly_plan` | One read to approve a week: box size needed vs current, suggested picks, the box price for the size it needs (HelloFresh's checkout total + premiums, or a labelled estimate), a one-line summary, and the exact follow-up write calls in order (never a resize of the first box, which keeps its size — see `notes`). Read-only. |
 
 ## Limits
 
