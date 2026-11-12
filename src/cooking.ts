@@ -185,3 +185,70 @@ export function dayFrom(date: string, n: number): { day: (typeof DAYS)[number]; 
   const d = new Date(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000);
   return { day: DAYS[d.getUTCDay()]!, date: d.toISOString().slice(0, 10) };
 }
+
+// ---- pantry ---------------------------------------------------------------------------
+// An ingredient with `shipped: false` is a staple HelloFresh does not send (salt, oil,
+// pepper, often butter / eggs / sugar / flour). A null amount means "to taste".
+
+export interface PantryDish {
+  name: string;
+  /** How many times the meal is picked: its amounts are multiplied by it. */
+  quantity: number;
+  ingredients: readonly RecipeIngredient[];
+}
+
+export interface PantryItem {
+  name: string;
+  /** The summed amount for `unit` (absent on a to-taste line). */
+  total?: number;
+  unit?: string;
+  /** Every amount on this line is unlisted ("to taste"). */
+  toTaste?: true;
+  usedIn: string[];
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const unitKey = (i: PantryItem) => i.unit ?? '';
+
+/**
+ * The not-shipped ingredients across `dishes`, one line per name and unit (amounts
+ * summed, × the dish's quantity); a name's unmeasured uses form its own to-taste
+ * line. Sorted by name, measured lines before the to-taste one, then by unit.
+ */
+export function pantryItems(dishes: readonly PantryDish[]): PantryItem[] {
+  const lines = new Map<string, PantryItem>();
+  for (const dish of dishes) {
+    for (const i of dish.ingredients) {
+      if (!i.notInBox) continue;
+      const name = i.name.trim();
+      const measured = i.amount !== undefined;
+      const key = `${name.toLowerCase()}\u0000${measured ? `=${i.unit ?? ''}` : '~'}`;
+      const line =
+        lines.get(key) ??
+        lines
+          .set(key, measured ? { name, total: 0, ...(i.unit ? { unit: i.unit } : {}), usedIn: [] } : { name, toTaste: true, usedIn: [] })
+          .get(key)!;
+      if (measured) line.total = round2(line.total! + i.amount! * dish.quantity);
+      if (!line.usedIn.includes(dish.name)) line.usedIn.push(dish.name);
+    }
+  }
+  return [...lines.values()].sort(
+    (a, b) =>
+      a.name.toLowerCase().localeCompare(b.name.toLowerCase()) ||
+      Number(a.toTaste ?? false) - Number(b.toTaste ?? false) ||
+      unitKey(a).localeCompare(unitKey(b)),
+  );
+}
+
+const UNIT_ABBREVIATIONS: Record<string, string> = { teaspoon: 'tsp', tablespoon: 'tbsp', ounce: 'oz' };
+
+/** The pantry list as one line, e.g. "From your pantry for 2026-W50: Cooking Oil (8 tsp), Salt (to taste)." */
+export function pantryLine(week: string, items: readonly PantryItem[]): string {
+  if (items.length === 0) return `Nothing from your pantry for ${week}: HelloFresh ships every ingredient.`;
+  const parts = items.map((i) => {
+    if (i.toTaste) return `${i.name} (to taste)`;
+    const unit = i.unit ? ` ${UNIT_ABBREVIATIONS[i.unit.toLowerCase()] ?? i.unit}` : '';
+    return `${i.name} (${i.total}${unit})`;
+  });
+  return `From your pantry for ${week}: ${parts.join(', ')}.`;
+}

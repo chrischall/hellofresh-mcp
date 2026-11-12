@@ -31,6 +31,7 @@ const EXPECTED: Record<string, string> = {
   hf_plan_weeks: 'other',
   hf_get_recipe: 'lookup',
   hf_cooking_plan: 'whats-on',
+  hf_pantry_check: 'lookup',
   hf_list_favorites: 'lookup',
   hf_list_ratings: 'lookup',
   hf_favorite_recipe: 'change',

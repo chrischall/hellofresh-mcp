@@ -183,6 +183,10 @@ prepTime, totalTime (ISO), category{name}, cuisines[], tags[], allergens[{name}]
 amount, unit}]}] (join on ingredient id; amount may be null), steps[{index, instructions, instructionsHTML,
 ingredients?, utensils?}] (6 steps typical), utensils[], cardLink (printable PDF), websiteUrl, averageRating,
 ratingsCount, favoritesCount`.
+Live-verified: each `ingredients[].shipped` is a boolean — `shipped: false` is a pantry staple HelloFresh does NOT
+send (e.g. Salt, Cooking Oil, Black Pepper; often butter, eggs, sugar, flour). Amounts come from
+`yields[{yields: servings}].ingredients[{id, amount, unit}]` joined on the ingredient id; a null `amount` means
+"to taste" (`hf_pantry_check` sums the not-shipped amounts per name and unit across a week's picks).
 
 ### Favorites (VERIFIED round trip)
 - List: `GET /gw/cfs/v2/favorites/recipe?country=US&locale=en-US` → `{skip, take, total, count, items:[{id,

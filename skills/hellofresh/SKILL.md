@@ -68,7 +68,14 @@ means the browser may be signed out: same remedy.
 - `hf_cooking_plan` `{week}` — the week's picks in cook order, most perishable
   first (fish → shellfish → other seafood → poultry → ground meat → beef/pork/lamb
   → vegetarian; ties by shorter time), each with a suggested day from the
-  delivery date, why, time and key ingredients.
+  delivery date, why, time, key ingredients and `pantry` (the staples to have
+  on hand).
+- `hf_pantry_check` `{week, view?}` — what to have in the pantry: the staples
+  HelloFresh does NOT ship (salt, pepper, oil, often butter/eggs/sugar/flour)
+  across the week's picks, summed per ingredient and unit (× quantity; "to
+  taste" when unmeasured) with the dishes using each, and a one-line `summary`
+  to pass on. `notes` flags nearest-yield amounts; `unread` names any recipe it
+  could not read.
 
 Reads take `view`: `compact` (default) is enough to decide; ask for `full` only
 for a field compact leaves out. Every `price` amount is in US dollars, whatever
@@ -187,7 +194,7 @@ On a host that groups MCPs by context (mcp-host's context groups), every tool
 but `hf_healthcheck` is in the **food** group, with these intents:
 
 - **whats-on** — `hf_list_deliveries`, the group's one canonical read (its `view: "brief"` gives one line per week); `hf_cooking_plan` (not canonical: the week's cook order).
-- **lookup** — `hf_get_subscription`, `hf_get_delivery`, `hf_get_menu`, `hf_list_box_sizes`, `hf_recent_picks`, `hf_list_profiles`, `hf_get_recipe`, `hf_list_favorites`, `hf_list_ratings`, `hf_promo_status`.
+- **lookup** — `hf_get_subscription`, `hf_get_delivery`, `hf_get_menu`, `hf_list_box_sizes`, `hf_recent_picks`, `hf_list_profiles`, `hf_get_recipe`, `hf_pantry_check`, `hf_list_favorites`, `hf_list_ratings`, `hf_promo_status`.
 - **change** — `hf_select_meals`, `hf_set_week_size`, `hf_set_week_delivery_day`, `hf_skip_week`, `hf_unskip_week`, `hf_change_plan_size`, `hf_change_delivery_schedule`, `hf_favorite_recipe`, `hf_unfavorite_recipe`.
 - **other** — `hf_suggest_meals`, `hf_weekly_plan`, `hf_plan_weeks`.
 

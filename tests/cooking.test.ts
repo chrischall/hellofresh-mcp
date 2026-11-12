@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cookOrder, dayFrom, nearestYield, perishabilityOf, plainText, projectRecipe } from '../src/cooking.js';
+import { cookOrder, dayFrom, nearestYield, pantryItems, pantryLine, perishabilityOf, plainText, projectRecipe } from '../src/cooking.js';
 import type { RawRecipeDetail } from '../src/types.js';
 
 // Synthetic recipe detail (docs/HELLOFRESH-API.md "Recipe detail" shape).
@@ -177,5 +177,90 @@ describe('dayFrom', () => {
     expect(dayFrom('2026-11-30', 0)).toEqual({ day: 'Mon', date: '2026-11-30' });
     expect(dayFrom('2026-11-30', 1)).toEqual({ day: 'Tue', date: '2026-12-01' });
     expect(dayFrom('2026-11-30', 6)).toEqual({ day: 'Sun', date: '2026-12-06' });
+  });
+});
+
+describe('pantryItems', () => {
+  const dish = (name: string, ingredients: Array<{ name: string; amount?: number; unit?: string; notInBox?: true }>, quantity = 1) => ({
+    name,
+    quantity,
+    ingredients,
+  });
+
+  it('sums the not-shipped ingredients per name and unit across dishes, sorted by name; shipped ones are left out', () => {
+    const items = pantryItems([
+      dish('Tilapia Chowder', [
+        { name: 'Tilapia', amount: 10, unit: 'ounce' },
+        { name: 'Cooking Oil', amount: 2, unit: 'teaspoon', notInBox: true },
+        { name: 'Butter', amount: 1, unit: 'tablespoon', notInBox: true },
+        { name: 'Salt', unit: 'unit', notInBox: true },
+      ]),
+      dish('Shrimp Linguine', [
+        { name: 'cooking oil ', amount: 2.5, unit: 'teaspoon', notInBox: true },
+        { name: 'Butter', amount: 2, unit: 'ounce', notInBox: true },
+        { name: 'Salt', notInBox: true },
+        { name: 'Black Pepper', notInBox: true },
+        { name: 'Eggs', amount: 2, notInBox: true },
+      ]),
+    ]);
+    expect(items).toEqual([
+      { name: 'Black Pepper', toTaste: true, usedIn: ['Shrimp Linguine'] },
+      { name: 'Butter', total: 2, unit: 'ounce', usedIn: ['Shrimp Linguine'] },
+      { name: 'Butter', total: 1, unit: 'tablespoon', usedIn: ['Tilapia Chowder'] },
+      { name: 'Cooking Oil', total: 4.5, unit: 'teaspoon', usedIn: ['Tilapia Chowder', 'Shrimp Linguine'] },
+      { name: 'Eggs', total: 2, usedIn: ['Shrimp Linguine'] },
+      { name: 'Salt', toTaste: true, usedIn: ['Tilapia Chowder', 'Shrimp Linguine'] },
+    ]);
+  });
+
+  it('a dish picked twice doubles its amounts; a to-taste line is kept apart from a measured one', () => {
+    const items = pantryItems([
+      dish('Chicken Pasta', [{ name: 'Olive Oil', amount: 1.1, unit: 'tablespoon', notInBox: true }, { name: 'Sugar', notInBox: true }], 2),
+      dish('Beef Tacos', [{ name: 'Olive Oil', amount: 1, unit: 'tablespoon', notInBox: true }, { name: 'Sugar', amount: 1, unit: 'teaspoon', notInBox: true }]),
+    ]);
+    expect(items).toEqual([
+      { name: 'Olive Oil', total: 3.2, unit: 'tablespoon', usedIn: ['Chicken Pasta', 'Beef Tacos'] },
+      { name: 'Sugar', total: 1, unit: 'teaspoon', usedIn: ['Beef Tacos'] },
+      { name: 'Sugar', toTaste: true, usedIn: ['Chicken Pasta'] },
+    ]);
+  });
+
+  it('a staple listed twice in one dish names the dish once; a unitless amount sorts before a unit', () => {
+    const items = pantryItems([
+      dish('Omelette', [
+        { name: 'Eggs', amount: 2, unit: 'unit', notInBox: true },
+        { name: 'Eggs', amount: 1, notInBox: true },
+        { name: 'Eggs', amount: 1, unit: 'unit', notInBox: true },
+      ]),
+    ]);
+    expect(items).toEqual([
+      { name: 'Eggs', total: 1, usedIn: ['Omelette'] },
+      { name: 'Eggs', total: 3, unit: 'unit', usedIn: ['Omelette'] },
+    ]);
+  });
+
+  it('nothing not-shipped is an empty list', () => {
+    expect(pantryItems([dish('A', [{ name: 'Rice', amount: 1, unit: 'cup' }])])).toEqual([]);
+    expect(pantryItems([])).toEqual([]);
+  });
+});
+
+describe('pantryLine', () => {
+  it('one line: abbreviated common units, to-taste items said so', () => {
+    expect(
+      pantryLine('2026-W50', [
+        { name: 'Black Pepper', toTaste: true, usedIn: ['A'] },
+        { name: 'Butter', total: 2, unit: 'tablespoon', usedIn: ['A'] },
+        { name: 'Cooking Oil', total: 8, unit: 'teaspoon', usedIn: ['A'] },
+        { name: 'Cream', total: 4, unit: 'ounce', usedIn: ['A'] },
+        { name: 'Eggs', total: 2, usedIn: ['A'] },
+        { name: 'Flour', total: 0.5, unit: 'cup', usedIn: ['A'] },
+      ]),
+    ).toBe(
+      'From your pantry for 2026-W50: Black Pepper (to taste), Butter (2 tbsp), Cooking Oil (8 tsp), Cream (4 oz), Eggs (2), Flour (0.5 cup).',
+    );
+  });
+  it('an empty list says HelloFresh ships everything', () => {
+    expect(pantryLine('2026-W50', [])).toMatch(/Nothing from your pantry for 2026-W50/);
   });
 });
