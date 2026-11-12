@@ -166,6 +166,10 @@
       "description": "Order a week's picked meals for cooking, most perishable first (fish, shellfish, ... vegetarian last), with a suggested day, why, time, key ingredients and recipe card; read-only."
     },
     {
+      "name": "hf_promo_status",
+      "description": "Track the voucher: coupon code, active, box limit, boxes used and left, each upcoming running week's real discount from HelloFresh's calculator, and warnings (no discount, percent change, inactive, few boxes left); read-only."
+    },
+    {
       "name": "hf_list_favorites",
       "description": "List the user's favourite recipes, named from a week's menu when given; read-only."
     },

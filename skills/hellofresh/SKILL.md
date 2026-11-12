@@ -48,6 +48,12 @@ means the browser may be signed out: same remedy.
 - `hf_get_subscription` — box size, price, delivery slot and frequency, next
   delivery and cutoff, voucher. Never name, email, address or payment.
 - `hf_list_box_sizes` — the box sizes (meals × people) the plan can switch to.
+- `hf_promo_status` `{next_box_number?}` — the voucher: code, active, box limit,
+  boxes used and left (`boxesUsedBasis` says whether that count is exact, given
+  or assumed), each upcoming running week's real discount from HelloFresh's
+  calculator (or `unavailable`), and `warnings` (no discount on a running week,
+  coupon percent change, inactive voucher, fewer than 4 discounted boxes left).
+  Surface every warning to the user.
 - `hf_list_favorites` `{week?}` — the user's favourite recipes; with a week,
   the ones on its menu are named with their index.
 - `hf_list_ratings` `{week?, scale?}` — the user's own recipe ratings (read
@@ -170,7 +176,7 @@ On a host that groups MCPs by context (mcp-host's context groups), every tool
 but `hf_healthcheck` is in the **food** group, with these intents:
 
 - **whats-on** — `hf_list_deliveries`, the group's one canonical read (its `view: "brief"` gives one line per week); `hf_cooking_plan` (not canonical: the week's cook order).
-- **lookup** — `hf_get_subscription`, `hf_get_delivery`, `hf_get_menu`, `hf_list_box_sizes`, `hf_recent_picks`, `hf_list_profiles`, `hf_get_recipe`, `hf_list_favorites`, `hf_list_ratings`.
+- **lookup** — `hf_get_subscription`, `hf_get_delivery`, `hf_get_menu`, `hf_list_box_sizes`, `hf_recent_picks`, `hf_list_profiles`, `hf_get_recipe`, `hf_list_favorites`, `hf_list_ratings`, `hf_promo_status`.
 - **change** — `hf_select_meals`, `hf_set_week_size`, `hf_set_week_delivery_day`, `hf_skip_week`, `hf_unskip_week`, `hf_change_plan_size`, `hf_change_delivery_schedule`, `hf_favorite_recipe`, `hf_unfavorite_recipe`.
 - **other** — `hf_suggest_meals`, `hf_weekly_plan`.
 

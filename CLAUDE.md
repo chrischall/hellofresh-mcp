@@ -53,6 +53,9 @@ npm run test:coverage  # 100% thresholds, run by CI
 - `src/cooking.ts` + `src/tools/cooking.ts` — `hf_get_recipe` /
   `hf_cooking_plan`: a pure recipe projection and cook-order ranking, and the
   read-only tools (recipe text is third-party: answered as untrusted content).
+- `src/tools/promo.ts` — `hf_promo_status`: the voucher's boxes used/left and each
+  running week's real discount from the calculator (bounded by `PRICE_CONCURRENCY`),
+  with warnings. Read-only.
 - `src/planner.ts` — pure scoring for `hf_suggest_meals` / `hf_weekly_plan`,
   driven by a planner profile (`src/profiles.ts`: `HELLOFRESH_PROFILES` →
   `HELLOFRESH_PROFILES_FILE` → built-in `couple` / `family`, parsed once, a bad
