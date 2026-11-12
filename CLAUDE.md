@@ -3,8 +3,9 @@
 Unofficial HelloFresh (US) MCP (`@chrischall/hellofresh-mcp`): subscription,
 delivery weeks, menus and meal picks, plus confirm-gated writes (pick meals,
 one-week size / delivery day, skip / unskip, permanent plan size and schedule,
-favourite / un-favourite a recipe), favourites and ratings reads, and three
-read-only planner tools (profiles, suggest, weekly plan). stdio
+favourite / un-favourite a recipe), favourites and ratings reads, cooking-day
+reads (recipe detail, cook order), and three read-only planner tools
+(profiles, suggest, weekly plan). stdio
 transport, tool prefix `hf_`.
 
 ## Commands
@@ -49,6 +50,9 @@ npm run test:coverage  # 100% thresholds, run by CI
 - `src/tools/favorites.ts` — favourites (list + confirm-gated add/remove,
   verified by re-reading the list) and the ratings list. The planner reads both
   best effort (`readPersonal` in `src/tools/shared.ts`).
+- `src/cooking.ts` + `src/tools/cooking.ts` — `hf_get_recipe` /
+  `hf_cooking_plan`: a pure recipe projection and cook-order ranking, and the
+  read-only tools (recipe text is third-party: answered as untrusted content).
 - `src/planner.ts` — pure scoring for `hf_suggest_meals` / `hf_weekly_plan`,
   driven by a planner profile (`src/profiles.ts`: `HELLOFRESH_PROFILES` →
   `HELLOFRESH_PROFILES_FILE` → built-in `couple` / `family`, parsed once, a bad
