@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/chrischall/hellofresh-mcp/compare/v0.3.0...v0.4.0) (2026-11-12)
+
+
+### Features
+
+* **session:** keep the HelloFresh session across restarts ([#8](https://github.com/chrischall/hellofresh-mcp/issues/8)) ([e345475](https://github.com/chrischall/hellofresh-mcp/commit/e345475d4a8e31933b98b2a4e296df8beafa372c))
+
 ## [0.3.0](https://github.com/chrischall/hellofresh-mcp/compare/v0.2.0...v0.3.0) (2026-11-12)
 
 
