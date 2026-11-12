@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "hellofresh-mcp",
   "display_name": "HelloFresh",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Unofficial HelloFresh (US) tools for Claude — subscription, weekly deliveries, menus, meal picks, skips and box sizes via your signed-in browser",
   "author": {
     "name": "Chris Chall",
