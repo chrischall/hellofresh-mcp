@@ -14,7 +14,7 @@ Records carry the account holder's name, email, addresses and payment token.
 Every recipe below projects to the fields it needs; never dump a whole
 subscription or delivery into a chat.
 
-Money is in US **cents**. Weeks are ISO weeks (`2026-W49`). `deliveryOption`
+Money is in US **cents**, except the calculator's answer, which is in dollars. Weeks are ISO weeks (`2026-W49`). `deliveryOption`
 handles read `US-<weekday 1=Mon..7=Sun>-<from HHMM>-<to HHMM>`.
 
 ## Subscription
@@ -112,21 +112,41 @@ The current picks (a `selection.quantity` means picked):
 jq '.meals[] | select(.selection.quantity) | {index, name: .recipe.name, quantity: .selection.quantity}' "$S/menu-$W.json"
 ```
 
-## Estimated box total
+## Real box price (HelloFresh's own calculator, through the tab)
 
-There is no single "box total" read. Product price + fee + shipping + premiums,
-before any voucher discount:
+`POST /gw/calculate` is behind Cloudflare's WAF for anything that isn't the
+browser (`403 "Attention Required"` from curl), so this one call goes through
+the signed-in tab with `fpx post-json`. It needs the bearer header too. `fpx`
+only takes headers as arguments, so the token is visible in `ps` for the
+duration of that one call; it comes from the 600-mode file, never from your
+typing, so it stays out of shell history. The hellofresh-mcp server avoids even
+that. `recipeIndexes` must be **strings**. The answer is in **dollars**.
 
 ```sh
+W=2026-W50
+SUBJ=$(hf "/api/customers/me/subscriptions?$Q" | jq '.items[0]')
+SUB=$(jq -r .id <<<"$SUBJ"); PLAN=$(jq -r .customerPlanId <<<"$SUBJ")
 D=$(hf "/api/subscriptions/$SUB/delivery_dates/$W?$Q")
-jq -n --argjson d "$D" --slurpfile m "$S/menu-$W.json" '
-  ($d.product.price + ($d.product.specialFee // 0) + ($d.product.shippingPrice // 0)
-   + ([$m[0].meals[] | select(.selection.quantity) | (.charge.totalAmount // 0)] | add // 0)) / 100'
+SKU=$(jq -r .product.handle <<<"$D"); PEOPLE=$(jq -r .product.specs.size <<<"$D")
+hf "/my-deliveries/menu?subscription=$SUB&week=$W&locale=en-US&servings=$PEOPLE&product-sku=$SKU&customerPlanId=$PLAN&exclude-feedback=true" > "$S/menu-$W.json"
+(umask 077; jq -n --argjson s "$SUBJ" --argjson d "$D" --slurpfile m "$S/menu-$W.json" '
+  ($s.firstDeliveryWeek == $d.id) as $first |
+  {customerID: ($s.customer.id | tonumber), subscriptionID: ($s.id | tonumber), couponCode: ($s.couponCode // ""),
+   shippingAddress: {postcode: $s.shippingAddress.postcode}, planID: $s.customerPlanId, locale: "en-US", country: "US",
+   products: [{handle: $d.product.handle, hfWeek: $d.id, deliveryOption: $d.deliveryOption.handle,
+               recipeIndexes: [$m[0].meals[] | select(.selection.quantity) | (.index | tostring)]}],
+   weekId: $d.id, isFirstOrder: $first, isRecurring: ($first | not), isFutureWeek: true, boxSize: $d.product.specs.size}' > "$S/calc-$W.json")
+fpx post-json 'https://www.hellofresh.com/gw/calculate' @"$S/calc-$W.json" -p hellofresh -H "$(tr -d '\n' < "$S/auth.header")" \
+  | jq --slurpfile m "$S/menu-$W.json" '{week: .products[0].hfWeek, grandTotal, subTotal, discountAmount, couponPercent: .products[0].couponPercent,
+      shipping: .shippingAmount, shippingDiscount: .shippingDiscountAmount, tax: .taxAmount,
+      premiumsNotIncluded: ([$m[0].meals[] | select(.selection.quantity) | (.charge.totalAmount // 0)] | add / 100)}'
 ```
 
-The voucher (`voucherInfo.discount_settings.discount_rule.box_rule`) gives a
-per-box-number percentage in hundredths (`6500` = 65 %); `applicable_to:
-"products"` discounts the product price only. Label any figure an estimate.
+The calculator does **not** include premium recipe upcharges (`charges` comes
+back `null`): add `premiumsNotIncluded` yourself. The request body carries the
+delivery postcode, and the response carries the customer ids and shipping
+address, so the projection above keeps only the money. Keep it that way.
+`$S/calc-$W.json` is written mode 600 for the same reason.
 
 ## Refresh (only when reloading the tab didn't help)
 

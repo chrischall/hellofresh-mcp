@@ -1,6 +1,6 @@
 ---
 name: hellofresh-fpx
-description: "Read HelloFresh (US) meal-kit data from a shell — the subscription (box size, delivery slot, frequency), upcoming delivery weeks with cutoffs and skip status, a week's menu with the current meal picks and premium upcharges, the box sizes on offer, and the customer plan — with curl and jq, using the session token from the user's signed-in hellofresh.com tab (read once with the fpx CLI). Use when asked about HelloFresh boxes, deliveries, cutoffs, menus or picks without the hellofresh-mcp server."
+description: "Read HelloFresh (US) meal-kit data from a shell — the subscription (box size, delivery slot, frequency), upcoming delivery weeks with cutoffs and skip status, a week's menu with the current meal picks and premium upcharges, HelloFresh's own price for a week's box, the box sizes on offer, and the customer plan — with curl and jq, using the session token from the user's signed-in hellofresh.com tab (read once with the fpx CLI). Use when asked about HelloFresh boxes, deliveries, cutoffs, menus or picks without the hellofresh-mcp server."
 ---
 
 # HelloFresh access (fpx + curl)
@@ -9,9 +9,12 @@ The hellofresh.com web app keeps its session in the cookie **`apiV2Auth`** on
 `www.hellofresh.com`: a URL-encoded JSON token set whose `access_token` (a
 30-minute JWT) is sent as `Authorization: Bearer` to
 `https://www.hellofresh.com/gw/...`. With a bearer the API answers plain `curl`
-(no Cloudflare wall), so `fpx` is used for one thing only: reading that cookie
-from the signed-in tab — and, after a Node-side refresh, writing the rotated
-token set back so the browser stays signed in.
+(no Cloudflare wall), so `fpx` is used for three things only:
+- reading that cookie from the signed-in tab;
+- after a shell-side refresh, writing the rotated token set back so the
+  browser stays signed in;
+- the one call Cloudflare walls even with a bearer: HelloFresh's price
+  calculator, sent through the tab.
 
 **Read-only.** For changes (meal picks, skips, box size, delivery day), use the
 hellofresh-mcp tools: they are confirmation-gated and verify every write. The
@@ -70,9 +73,14 @@ recipes project them away; keep it that way when writing new ones.
 - `400 {"error":"invalid_grant"}` on refresh — the refresh token is spent:
   sign in again at hellofresh.com in the paired browser.
 - A `Just a moment…` HTML page — the request went out without a bearer.
+- `403` with an "Attention Required" HTML page on `/gw/calculate` — it was
+  sent from curl; it only works through the tab (`fpx post-json`, see
+  `references/requests.md` § Real box price).
 - The menu call answers `400` unless it carries `servings` + `product-sku`.
 - `hf-token.mjs` exits `4` when the cookie holds no session (signed out) or a
   refresh was refused, `64` on bad usage.
 - `fpx` exits `2` when the bridge is down or the tab/pairing is missing.
 
-Never paste token values into chat, commits or issues. `rm ~/.hellofresh-fpx/{cookie.json,auth.json,auth.header,refreshed.json,cookie.txt}` clears them.
+Never paste token values into chat, commits or issues. `rm ~/.hellofresh-fpx/{cookie.json,auth.json,auth.header,refreshed.json,cookie.txt,calc-*.json}` clears them.
+
+Every recipe here was run live in both bash and zsh on 2026-11-12.
