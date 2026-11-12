@@ -11,6 +11,7 @@ import { registerCookingTools } from './cooking.js';
 import { registerFavoriteTools } from './favorites.js';
 import { registerHealthcheckTool } from './healthcheck.js';
 import { registerPlannerTools } from './planner.js';
+import { registerPromoTools } from './promo.js';
 import { registerReadTools } from './reads.js';
 import { registerWriteTools } from './writes/index.js';
 
@@ -40,4 +41,5 @@ export const TOOL_REGISTRARS: readonly ToolRegistrar[] = [
   registerPlannerTools,
   registerCookingTools,
   registerFavoriteTools,
+  registerPromoTools,
 ];
