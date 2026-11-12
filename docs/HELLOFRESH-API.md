@@ -152,3 +152,47 @@ readable, so the tools ASSUME the next running box is box 2 and say so (`next_bo
 overrides).
 Checked: a 6-person box $147.48 + $12.99 fee = $160.47; 15% of $147.48 = $22.12 off. A 2-person box $59.96 + $12.99 = $72.95.
 Always label it an estimate and flag when `voucherInfo` is missing/inactive.
+
+## Added 2026-11-12 (live-verified)
+
+### Real box price — `POST /gw/calculate` (BRIDGE ONLY)
+Cloudflare's WAF answers this POST from Node with `403` "Attention Required" (HTML) even with a valid
+bearer; it succeeds as an in-tab fetch through the bridge (`fetch` capability, already in the pairing
+scope) with `Authorization: Bearer <token>` + `Content-Type: application/json`. VERIFIED for three weeks.
+Body (built from the subscription + delivery; the site's own shape):
+`{"customerID": <customer.id int>, "subscriptionID": <id int>, "couponCode": "<subscription.couponCode or "">",
+"shippingAddress": {"postcode": "<shippingAddress.postcode>"}, "planID": "<customerPlanId>", "locale": "en-US",
+"country": "US", "products": [{"handle": "<sku>", "hfWeek": "<week>", "deliveryOption": "<delivery option>",
+"recipeIndexes": ["640", "71"]}], "weekId": "<week>", "isFirstOrder": <week == firstDeliveryWeek>,
+"isRecurring": <!isFirstOrder>, "isFutureWeek": <bool>, "boxSize": <people>}`
+— **`recipeIndexes` are STRINGS** (numbers → `400 cannot unmarshal number … of type string`).
+Response (dollars, not cents): `{grandTotal, subTotal, taxAmount, shippingAmount, shippingDiscountAmount,
+discountAmount, couponCode, isRecurring, boxSize, currency, products:[{handle, hfWeek, unitPrice, paidPrice,
+taxAmount, taxPercent, shippingAmount, couponMoneyValue, couponPercent, couponCode, charges (null), benefitIDs}]}`
+plus customer/subscription ids and the shipping address — NEVER return those; project only the money fields.
+Observed: 2×6 week → subTotal 147.48, shipping 12.99 (fully discounted), discountAmount 108.85, tax 1.03,
+**grandTotal 52.65**; 2×2 week → 59.96 / 51.96 off / **21.41**. couponPercent 65 on each of the first three
+boxes (so the voucher's `box_rule` reading in "Pricing" below is NOT reliable — prefer this endpoint).
+**Premium recipe charges are NOT included** (`charges: null` even with a +$1.99/serving swap selected):
+report them separately from the menu's `charge.totalAmount`.
+
+### Recipe detail — `GET /gw/recipes/recipes/{recipe.id}?country=US&locale=en-US` (Node, VERIFIED)
+`recipe.id` is the menu meal's `recipe.id` (24-hex). Fields: `name, headline, description, difficulty,
+prepTime, totalTime (ISO), category{name}, cuisines[], tags[], allergens[{name}], nutrition[{name, amount, unit}]
+(per serving), ingredients[{id, name, shipped, allergens, family}], yields[{yields: 2|3|4|6, ingredients:[{id,
+amount, unit}]}] (join on ingredient id; amount may be null), steps[{index, instructions, instructionsHTML,
+ingredients?, utensils?}] (6 steps typical), utensils[], cardLink (printable PDF), websiteUrl, averageRating,
+ratingsCount, favoritesCount`.
+
+### Favorites (VERIFIED round trip)
+- List: `GET /gw/cfs/v2/favorites/recipe?country=US&locale=en-US` → `{skip, take, total, count, items:[{id,
+  customer_uuid, customer_country, object_type:'recipe', object_id:<recipe.id>, created_at}]}` (never return customer_uuid).
+- Add: `PUT /gw/cfs/v2/favorites/recipe/{recipe.id}?country=US&locale=en-US[&weekId=<week>]` → 204, no body.
+- Remove: `DELETE /gw/cfs/v2/favorites/recipe/{recipe.id}?country=US&locale=en-US` → 204.
+
+### Ratings
+- List (VERIFIED, empty for a new account): `GET /gw/cfs/v2/ratings/recipe?country=us&locale=en-US`
+  (and `/cfs/v3/…` for the 5-star scale) → `{skip, take, total, count, items:[]}`. Item shape not yet observed —
+  read defensively (recipe id + rating fields), and say so.
+- Rate (NOT verified — needs a delivered box; do NOT implement yet): `PUT /gw/cfs/{v2|v3}/ratings/recipe/{recipe.id}?country=us&locale=en-US`
+  body `{menu_id, rating, hellofresh_week, comment?, comment_categorisation?}` (v3 when the scale is 5).
