@@ -149,6 +149,14 @@
     {
       "name": "hf_weekly_plan",
       "description": "Plan a delivery week for a planner profile: box size needed, suggested picks, estimated total, approval summary and the follow-up writes; read-only."
+    },
+    {
+      "name": "hf_get_recipe",
+      "description": "Read the full recipe for one meal on a week's menu (protein swaps included): time, difficulty, allergens, nutrition, ingredient amounts for the week's servings, steps, utensils and recipe card; read-only."
+    },
+    {
+      "name": "hf_cooking_plan",
+      "description": "Order a week's picked meals for cooking, most perishable first (fish, shellfish, ... vegetarian last), with a suggested day, why, time, key ingredients and recipe card; read-only."
     }
   ],
   "compatibility": {
