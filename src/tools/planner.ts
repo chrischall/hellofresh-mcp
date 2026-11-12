@@ -40,6 +40,7 @@ import {
   nextBoxNumberParam,
   premiumCentsOf,
   readMenu,
+  MenuNotPublishedError,
   readPersonal,
   readPicks,
   weekParam,
@@ -520,7 +521,7 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
         'again in a later one (on top of the recent-picks rule). Returns a combined summary (one line per week), ' +
         'the total of HelloFresh’s own box prices (weeks with only a local estimate are named, not added), and the ' +
         'follow-up write calls per week in order (hf_set_week_size where needed, then hf_select_meals). A skipped ' +
-        'week is reported as skipped, with no suggestions. Which profile each week gets (e.g. from a calendar) is ' +
+        'week is reported as skipped, with no suggestions; a week whose menu HelloFresh has not published yet is reported as menu_not_published. Which profile each week gets (e.g. from a calendar) is ' +
         'the caller’s decision: this tool does not read a calendar. Read-only: it changes nothing.',
       annotations: readOnly('HelloFresh: plan several weeks'),
       _meta: foodMeta('other', { aliases: ['plan next few hellofresh weeks', 'multi-week meal plan', 'plan the month of hellofresh'] }),
@@ -563,7 +564,22 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
           continue;
         }
         const avoid = [...planned];
-        const one = await weeklyPlan(client, account, delivery, resolved, { week, profile }, now(), gate, avoid);
+        let one: Awaited<ReturnType<typeof weeklyPlan>>;
+        try {
+          one = await weeklyPlan(client, account, delivery, resolved, { week, profile }, now(), gate, avoid);
+        } catch (err) {
+          if (!(err instanceof MenuNotPublishedError)) throw err;
+          weeks.push({
+            week,
+            profile: resolved.name,
+            status: 'menu_not_published',
+            delivery: { deliveryDate: dateOf(delivery.deliveryDate), cutoffDate: delivery.cutoffDate, status: delivery.status },
+            note: `${err.message} Plan it once the menu is out.`,
+          });
+          lines.push(`${week}: menu not published yet — not planned.`);
+          notIncluded.push({ week, reason: 'menu not published yet' });
+          continue;
+        }
         const picks = (one.result.picks as Array<{ name?: string }>).map((p) => p.name).filter((n): n is string => !!n);
         planned.push(...picks);
         weeks.push({ ...one.result, ...(avoid.length > 0 ? { avoidedFromEarlierWeeks: avoid } : {}) });

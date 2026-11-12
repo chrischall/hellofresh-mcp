@@ -612,6 +612,37 @@ describe('hf_plan_weeks', () => {
     }
   });
 
+  it('a week whose menu HelloFresh has not published yet (404) is reported, not fatal: the other weeks are planned', async () => {
+    const unpublished: Route = [
+      /\/my-deliveries\/menu$/,
+      (url: URL) => (url.searchParams.get('week') === '2026-W50' ? json({ status: 'NOT_FOUND' }, 404) : json(MENU)),
+    ];
+    const { out } = await call(
+      'hf_plan_weeks',
+      { weeks: [{ week: '2026-W49', profile: 'family' }, { week: '2026-W50', profile: 'family' }] },
+      [W50_RUNNING, unpublished],
+    );
+    const [w49, w50] = out.weeks;
+    expect(w49.picks.length).toBeGreaterThan(0);
+    expect(w50).toMatchObject({ week: '2026-W50', status: 'menu_not_published' });
+    expect(w50.note).toMatch(/menu.*not.*published/i);
+    expect(out.summary).toMatch(/2026-W50: menu not published yet/);
+    expect(out.total.notIncluded).toContainEqual({ week: '2026-W50', reason: 'menu not published yet' });
+  });
+
+  it('any other menu failure (a 500) still fails hf_plan_weeks: only "not published" is tolerated', async () => {
+    const broken: Route = [/\/my-deliveries\/menu$/, () => json({ error: 'boom' }, 500)];
+    const { result } = await call('hf_plan_weeks', { weeks: [{ week: '2026-W49', profile: 'family' }] }, [W50_RUNNING, broken]);
+    expect(result.isError).toBe(true);
+  });
+
+  it('hf_weekly_plan on a week whose menu is not published says so plainly', async () => {
+    const unpublished: Route = [/\/my-deliveries\/menu$/, () => json({ status: 'NOT_FOUND' }, 404)];
+    const { result, text } = await call('hf_weekly_plan', { week: '2026-W50', profile: 'family' }, [W50_RUNNING, unpublished]);
+    expect(result.isError).toBe(true);
+    expect(text).toMatch(/2026-W50 menu.*not.*published yet/i);
+  });
+
   it('plans each week in week order exactly as hf_weekly_plan, never repeating a recipe planned for an earlier week', async () => {
     const { out, urls } = await call(
       'hf_plan_weeks',

@@ -4,7 +4,7 @@
 // box-number helpers, and the brief line.
 
 import { z } from 'zod';
-import { McpToolError, currentCallSignal, messageOf, viewParam, type View } from '@chrischall/mcp-utils';
+import { McpToolError, errorStatusOf, currentCallSignal, messageOf, viewParam, type View } from '@chrischall/mcp-utils';
 import type { BoxPrice, HelloFreshClient } from '../client.js';
 import {
   estimateBoxTotal,
@@ -103,13 +103,31 @@ export async function readRawMenu(
     throw new McpToolError(`HelloFresh returned no box size for ${week}, so its menu cannot be read.`);
   }
   const customerPlanId = await customerPlanIdOf(client, account);
-  return client.getDeliveryMenu({
-    subscriptionId: account.subscriptionId,
-    week,
-    servings: delivery.servings,
-    sku: delivery.sku,
-    customerPlanId,
-  });
+  try {
+    return await client.getDeliveryMenu({
+      subscriptionId: account.subscriptionId,
+      week,
+      servings: delivery.servings,
+      sku: delivery.sku,
+      customerPlanId,
+    });
+  } catch (err) {
+    // HelloFresh answers 404 for a week whose menu it has not published yet (menus appear a few weeks ahead).
+    if (errorStatusOf(err) === 404) throw new MenuNotPublishedError(week, err);
+    throw err;
+  }
+}
+
+/** HelloFresh has no menu for the week yet (404 on the delivery menu). */
+export class MenuNotPublishedError extends McpToolError {
+  constructor(readonly week: string, cause?: unknown) {
+    super(`The ${week} menu is not published yet: HelloFresh releases each week's menu a few weeks ahead.`, {
+      hint: 'Try again closer to the week (hf_list_deliveries shows the cutoff), or plan an earlier week now.',
+      status: 404,
+      cause,
+    });
+    this.name = 'MenuNotPublishedError';
+  }
 }
 
 /** The week's menu for the delivery's box size. */
