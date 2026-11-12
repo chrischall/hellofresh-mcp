@@ -297,6 +297,137 @@ describe('HelloFreshSession token lifecycle', () => {
     expect(err.message).toMatch(/fetch failed/);
   });
 
+  describe('the browser cookie read fails after this process refreshed', () => {
+    /** A session that refreshed once (written back), then the bridge read starts failing. */
+    function refreshedThenBridgeDown(
+      over: { cookie?: Partial<AuthTokenSet>; refresh?: Partial<AuthTokenSet>; write?: (value: string) => Promise<void> } = {},
+    ) {
+      const bodies: string[] = [];
+      let n = 0;
+      const read = { fail: false };
+      const h = harness({
+        cookie: async () => {
+          if (read.fail) throw new Error('tab closed');
+          return cookieOf(tokenSet({ issued_at: NOW_S - 1800, ...over.cookie }));
+        },
+        refresh: (body) => {
+          bodies.push(body);
+          n++;
+          return refreshed({ access_token: `access-${n}`, refresh_token: `refresh-${n}`, issued_at: NOW_S + n, ...over.refresh });
+        },
+        // Accept the write-back without replacing the (scripted) cookie read.
+        write: over.write ?? (async () => {}),
+      });
+      return { h, bodies, read };
+    }
+
+    it('refreshes from its OWN rotated token set instead of failing, and still writes the new set back', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { h, bodies, read } = refreshedThenBridgeDown();
+      await expect(h.session.getToken()).resolves.toBe('access-1');
+      read.fail = true;
+      h.clock.now = NOW_MS + 1800 * 1000;
+      await expect(h.session.getToken()).resolves.toBe('access-2');
+      expect(bodies.map((b) => JSON.parse(b).refresh_token)).toEqual(['refresh-RRR', 'refresh-1']);
+      expect(h.bridge.writeAuthCookie).toHaveBeenCalledTimes(2);
+      expect(decodeAuthCookie(h.bridge.writeAuthCookie.mock.calls[1]![0] as string).refresh_token).toBe('refresh-2');
+      expect(h.session.warning()).toBeUndefined();
+      const logged = errors.mock.calls.flat().join(' ');
+      expect(logged).toMatch(/could not read the browser session/);
+      expect(logged).not.toMatch(/access-|refresh-/);
+      errors.mockRestore();
+    });
+
+    it('a 401 replay while the bridge is down refreshes past the rejected token from our own set', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { h, bodies, read } = refreshedThenBridgeDown();
+      const token = await h.session.getToken();
+      read.fail = true;
+      h.session.invalidate(token);
+      await expect(h.session.getToken()).resolves.toBe('access-2');
+      expect(bodies.map((b) => JSON.parse(b).refresh_token)).toEqual(['refresh-RRR', 'refresh-1']);
+      vi.restoreAllMocks();
+    });
+
+    it('a failed write-back on that refresh still returns the new token and warns', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      let writes = 0;
+      const { h, read } = refreshedThenBridgeDown({
+        write: async () => {
+          writes++;
+          if (writes > 1) throw new Error('extension offline');
+        },
+      });
+      await h.session.getToken();
+      read.fail = true;
+      h.clock.now = NOW_MS + 1800 * 1000;
+      await expect(h.session.getToken()).resolves.toBe('access-2');
+      expect(h.session.warning()).toBe(WRITE_BACK_WARNING);
+      vi.restoreAllMocks();
+    });
+
+    it('an expired refresh token is not used: the bridge error surfaces', async () => {
+      const { h, read } = refreshedThenBridgeDown();
+      await h.session.getToken();
+      read.fail = true;
+      // refreshed() keeps refresh_expires_in 5_184_000 s from issued_at NOW_S + 1.
+      h.clock.now = (NOW_S + 1 + 5_184_000) * 1000;
+      const err = await h.session.getToken().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HelloFreshBridgeError);
+      expect(h.fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it('a refresh token with no stated lifetime is tried', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { h, read } = refreshedThenBridgeDown({ cookie: { refresh_expires_in: undefined }, refresh: { refresh_expires_in: undefined } });
+      await h.session.getToken();
+      read.fail = true;
+      h.clock.now = NOW_MS + 1800 * 1000;
+      await expect(h.session.getToken()).resolves.toBe('access-2');
+      vi.restoreAllMocks();
+    });
+
+    it('a set that came from the browser (not our own refresh) is never used as a fallback', async () => {
+      let fail = false;
+      const h = harness({
+        cookie: async () => {
+          if (fail) throw new Error('tab closed');
+          return cookieOf(tokenSet());
+        },
+        refresh: () => refreshed(),
+      });
+      const token = await h.session.getToken();
+      fail = true;
+      h.session.invalidate(token);
+      await expect(h.session.getToken()).rejects.toBeInstanceOf(HelloFreshBridgeError);
+      expect(h.fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('once the browser holds a newer set again, our older one is no longer a fallback', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      let cookie: string = cookieOf(tokenSet({ issued_at: NOW_S - 1800 }));
+      let fail = false;
+      const h = harness({
+        cookie: async () => {
+          if (fail) throw new Error('tab closed');
+          return cookie;
+        },
+        refresh: () => refreshed(),
+        write: async () => {},
+      });
+      await expect(h.session.getToken()).resolves.toBe('access-NEW');
+      // The browser refreshed itself past ours.
+      cookie = cookieOf(tokenSet({ access_token: 'access-B', refresh_token: 'refresh-B', issued_at: NOW_S + 1000 }));
+      h.clock.now = NOW_MS + 1800 * 1000;
+      await expect(h.session.getToken()).resolves.toBe('access-B');
+      fail = true;
+      h.session.invalidate('access-B');
+      await expect(h.session.getToken()).rejects.toBeInstanceOf(HelloFreshBridgeError);
+      expect(h.fetchImpl).toHaveBeenCalledTimes(1);
+      vi.restoreAllMocks();
+    });
+  });
+
   it('a 200 refresh without tokens is a format error', async () => {
     const h = harness({
       cookie: cookieOf(tokenSet({ issued_at: NOW_S - 1800 })),
