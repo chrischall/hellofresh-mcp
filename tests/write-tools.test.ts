@@ -432,7 +432,7 @@ describe('hf_set_week_size', () => {
   });
 
   it('refuses the subscription’s first box while it is undelivered (HelloFresh will not resize it), sending nothing', () =>
-    expectRefused('hf_set_week_size', args, /first box.*cannot be resized/i, {
+    expectRefused('hf_set_week_size', args, /first box.*does not allow resizing the first box/i, {
       routes: [['GET', /\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W49', firstBoxDelivered: false }] }]],
     }));
 
@@ -686,6 +686,17 @@ describe('hf_change_plan_size', () => {
       const preview = parseToolResult<Any>(await t.call('hf_change_plan_size', toPlan));
       expect(preview.preview.overriddenWeeks).toEqual([{ week: '2026-W49', sku: 'US-CBU-2-2-0', revertsTo: 'US-CBU-2-4-0' }]);
       expect(preview.preview.warning).toMatch(/2026-W49.*revert.*US-CBU-2-4-0.*hf_set_week_size/);
+    });
+
+    it('does not list the not-yet-delivered first box as an override (it cannot be resized)', async () => {
+      const t = await setup({
+        routes: [
+          ['GET', /\/api\/customers\/me\/deliveries$/, overridden],
+          ['GET', /\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W49', firstBoxDelivered: false }] }],
+        ],
+      });
+      const preview = parseToolResult<Any>(await t.call('hf_change_plan_size', toPlan));
+      expect(preview.preview.overriddenWeeks).toBeUndefined();
     });
 
     it('after execute, reports which overridden weeks reverted (and which kept their size)', async () => {

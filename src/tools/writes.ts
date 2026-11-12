@@ -337,8 +337,8 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
     async plan({ week, people, meals }): Promise<{ gate: GateFields; state: WeekSizeState }> {
       const account = await loadAccount(client);
       if (isUnresizableFirstBox(account.subscription, week)) {
-        throw new McpToolError(`${week} is this subscription’s first box, which HelloFresh does not let you resize: it cannot be resized.`, {
-          hint: 'Its size stays as ordered; later weeks can be resized once it is scheduled.',
+        throw new McpToolError(`${week} is this subscription’s first box, and HelloFresh does not allow resizing the first box.`, {
+          hint: 'It keeps the size it was ordered with; every later week can be resized with hf_set_week_size.',
         });
       }
       const { raw, delivery } = await openWeek(client, account, week, now());
@@ -549,9 +549,15 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
   }
 
   /** Upcoming running weeks still open for changes whose size differs from the plan's: week-only overrides. */
-  const overridesOf = (deliveries: readonly ProjectedDelivery[], planSku: string | undefined, at: number): Override[] =>
+  const overridesOf = (
+    deliveries: readonly ProjectedDelivery[],
+    planSku: string | undefined,
+    at: number,
+    subscription: Parameters<typeof isUnresizableFirstBox>[0],
+  ): Override[] =>
     deliveries.flatMap((d) =>
       d.status === 'running' &&
+      !(d.week && isUnresizableFirstBox(subscription, d.week)) &&
       d.week &&
       d.sku &&
       d.sku !== planSku &&
@@ -601,7 +607,7 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
       await requireOfferedSku(client, account, sku);
       const size = current ? /-(\d+)-(\d+)-\d+$/.exec(current) : null;
       const upcoming = await attempt(async () => ((await client.listDeliveries()).items ?? []).map(projectDelivery));
-      const overrides = upcoming.ok ? overridesOf(upcoming.value, current, now()) : [];
+      const overrides = upcoming.ok ? overridesOf(upcoming.value, current, now(), account.subscription) : [];
       return {
         gate: {
           action: 'hellofresh.plan.size',
