@@ -106,7 +106,7 @@ describe('projectRecipe', () => {
 
   it('names the ingredients without amounts when HelloFresh lists no yields', () => {
     const r = projectRecipe({ ingredients: [{ id: 'a', name: 'Rice' }], yields: [] }, 2);
-    expect(r.ingredients).toEqual([{ name: 'Rice' }]);
+    expect(r.ingredients).toEqual([{ name: 'Rice', amountUnknown: true }]);
     expect(r.amountsForServings).toBeUndefined();
     expect(r.yieldsNote).toMatch(/no ingredient amounts/);
     expect(r.allergens).toEqual([]);
@@ -262,5 +262,37 @@ describe('pantryLine', () => {
   });
   it('an empty list says HelloFresh ships everything', () => {
     expect(pantryLine('2026-W50', [])).toMatch(/Nothing from your pantry for 2026-W50/);
+  });
+});
+
+describe('pantry wording (live HelloFresh unit labels, unknown amounts)', () => {
+  it('abbreviates HelloFresh unit labels like "teaspoon (tsp)" to the parenthesised short form', () => {
+    const items = pantryItems([
+      { name: 'A', quantity: 1, ingredients: [
+        { name: 'Cooking Oil', amount: 5, unit: 'teaspoon (tsp)', notInBox: true },
+        { name: 'Butter', amount: 1, unit: 'tablespoon (tbsp)', notInBox: true },
+        { name: 'Water', amount: 2, unit: 'cup', notInBox: true },
+      ] },
+    ]);
+    expect(pantryLine('2026-W50', items)).toBe('From your pantry for 2026-W50: Butter (1 tbsp), Cooking Oil (5 tsp), Water (2 cup).');
+  });
+
+  it('a recipe that lists no amounts at all is "amount not listed", not "to taste"', () => {
+    const r = projectRecipe(
+      { name: 'No yields', ingredients: [{ id: 'i1', name: 'Salt', shipped: false }, { id: 'i2', name: 'Oil', shipped: false }] } as never,
+      2,
+    );
+    const items = pantryItems([{ name: 'No yields', quantity: 1, ingredients: r.ingredients }]);
+    expect(items.map((i) => [i.name, i.toTaste, i.amountUnknown])).toEqual([['Oil', undefined, true], ['Salt', undefined, true]]);
+    expect(pantryLine('2026-W50', items)).toBe('From your pantry for 2026-W50: Oil (amount not listed), Salt (amount not listed).');
+  });
+
+  it('a listed ingredient with a null amount stays "to taste"', () => {
+    const r = projectRecipe(
+      { name: 'Y', ingredients: [{ id: 'i1', name: 'Salt', shipped: false }], yields: [{ yields: 2, ingredients: [{ id: 'i1', amount: null, unit: 'unit' }] }] } as never,
+      2,
+    );
+    const items = pantryItems([{ name: 'Y', quantity: 1, ingredients: r.ingredients }]);
+    expect(items).toEqual([{ name: 'Salt', toTaste: true, usedIn: ['Y'] }]);
   });
 });

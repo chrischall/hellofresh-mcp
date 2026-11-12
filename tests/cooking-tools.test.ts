@@ -443,18 +443,19 @@ describe('hf_pantry_check', () => {
     ];
     const out = parseToolResult<Any>((await call('hf_pantry_check', { week: '2026-W49', view: 'full' }, [recipes, [/\/my-deliveries\/menu$/, menu]])).result);
     expect(out.items).toEqual([
-      { name: 'Black Pepper', toTaste: true, usedIn: ['#11'] },
-      { name: 'Salt', toTaste: true, usedIn: ['Synthetic Soup'] },
+      // These synthetic recipes list no yields at all: the amounts are unknown, not "to taste".
+      { name: 'Black Pepper', amountUnknown: true, usedIn: ['#11'] },
+      { name: 'Salt', amountUnknown: true, usedIn: ['Synthetic Soup'] },
     ]);
     expect(out.unread).toEqual([
       { index: 7, reason: expect.stringMatching(/no recipe id/) },
       { index: 9, reason: expect.stringMatching(/404/) },
     ]);
-    expect(out.summary).toMatch(/^From your pantry for 2026-W49: Black Pepper \(to taste\), Salt \(to taste\)\./);
+    expect(out.summary).toMatch(/^From your pantry for 2026-W49: Black Pepper \(amount not listed\), Salt \(amount not listed\)\./);
     expect(out.summary).toMatch(/2 recipes could not be read \(#7, #9\)/);
     expect(out.notes).toEqual([expect.stringMatching(/^#10 Synthetic Soup: .*no ingredient amounts/), expect.stringMatching(/^#11: /)]);
     expect(out.dishes[0]).toEqual({ index: 8, name: 'Veggie Bowl', quantity: 1, amountsForServings: 6, pantry: [] });
-    expect(out.dishes[1]).toEqual({ index: 10, name: 'Synthetic Soup', quantity: 1, pantry: [{ name: 'Salt' }] });
+    expect(out.dishes[1]).toEqual({ index: 10, name: 'Synthetic Soup', quantity: 1, pantry: [{ name: 'Salt', amountUnknown: true }] });
   });
 
   it('nothing from the pantry says so; one unread recipe is singular', async () => {
