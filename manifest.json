@@ -158,6 +158,10 @@
       "description": "Plan a delivery week for a planner profile: box size needed, suggested picks, box price, approval summary and the follow-up writes; read-only."
     },
     {
+      "name": "hf_plan_weeks",
+      "description": "Plan up to 6 delivery weeks at once, each for the profile the caller names: each week's plan, no recipe repeated across the weeks, a combined summary, the total of HelloFresh's prices and the follow-up writes per week; skipped weeks reported as skipped; read-only."
+    },
+    {
       "name": "hf_get_recipe",
       "description": "Read the full recipe for one meal on a week's menu (protein swaps included): time, difficulty, allergens, nutrition, ingredient amounts for the week's servings, steps, utensils and recipe card; read-only."
     },
