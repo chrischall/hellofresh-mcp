@@ -4,8 +4,8 @@ Unofficial HelloFresh (US) MCP (`@chrischall/hellofresh-mcp`): subscription,
 delivery weeks, menus and meal picks, plus confirm-gated writes (pick meals,
 one-week size / delivery day, skip / unskip, permanent plan size and schedule,
 favourite / un-favourite a recipe), favourites and ratings reads, cooking-day
-reads (recipe detail, cook order), and three read-only planner tools
-(profiles, suggest, weekly plan). stdio
+reads (recipe detail, cook order), and four read-only planner tools
+(profiles, suggest, weekly plan, multi-week plan). stdio
 transport, tool prefix `hf_`.
 
 ## Commands
@@ -53,7 +53,8 @@ npm run test:coverage  # 100% thresholds, run by CI
 - `src/cooking.ts` + `src/tools/cooking.ts` — `hf_get_recipe` /
   `hf_cooking_plan`: a pure recipe projection and cook-order ranking, and the
   read-only tools (recipe text is third-party: answered as untrusted content).
-- `src/planner.ts` — pure scoring for `hf_suggest_meals` / `hf_weekly_plan`,
+- `src/planner.ts` — pure scoring for `hf_suggest_meals` / `hf_weekly_plan`
+  (and `hf_plan_weeks`, which runs the weekly plan per week in `src/tools/planner.ts`),
   driven by a planner profile (`src/profiles.ts`: `HELLOFRESH_PROFILES` →
   `HELLOFRESH_PROFILES_FILE` → built-in `couple` / `family`, parsed once, a bad
   config is a tool error). No household-specific rules belong in the repo:

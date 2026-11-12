@@ -93,7 +93,7 @@ If calls fail with "Not signed in to HelloFresh", sign in again at hellofresh.co
 
 ### Planner profiles
 
-`hf_suggest_meals` and `hf_weekly_plan` plan a week for a named **profile**: who the box feeds and how to rank the menu. Each profile is:
+`hf_suggest_meals`, `hf_weekly_plan` and `hf_plan_weeks` plan a week for a named **profile**: who the box feeds and how to rank the menu. Each profile is:
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -162,6 +162,7 @@ Read tools take `view: compact | full` (default `compact`). A box `price` with `
 | `hf_get_recipe` | One meal's full recipe by week + menu index (protein swaps say which protein they swap in): time, difficulty, allergens, nutrition per serving, ingredient amounts for the week's servings (nearest listed yield otherwise, flagged), plain-text steps, utensils, recipe card PDF and web page. Recipe text is framed as untrusted third-party content. Read-only. |
 | `hf_cooking_plan` | A week's picked meals in a recommended cook order — fish, shellfish, other seafood, poultry, ground meat, whole cuts of beef/pork/lamb, vegetarian last; ties by shorter time — each with a suggested day from the delivery date, why, total time, key ingredients and recipe card. Read-only. |
 | `hf_weekly_plan` | One read to approve a week: box size needed vs current, suggested picks, the box price for the size it needs (HelloFresh's checkout total + premiums, or a labelled estimate), a one-line summary, and the exact follow-up write calls in order (never a resize of the first box, which keeps its size — see `notes`). Read-only. |
+| `hf_plan_weeks` | Plan 1–6 weeks at once, each `{week, profile}` (which profile applies to which week is your call — it reads no calendar): each week's `hf_weekly_plan` answer, never suggesting a recipe already planned for an earlier week, a combined summary (one line per week), the total of HelloFresh's own box prices (estimate-only weeks named, not added) and the follow-up writes per week. Skipped weeks are reported as skipped. Read-only. |
 | `hf_list_favorites` | The recipes you favourited (recipe ids and dates; never your customer id); give a week to name the ones on its menu. The planner favours them. |
 | `hf_list_ratings` | Your own recipe ratings (v2 and/or the 5-star v3 scale); give a week to name them. Parsed defensively — the item shape isn't observed live yet, so unreadable items are skipped and counted. The planner never suggests a recipe you rated 2 or lower. |
 | `hf_favorite_recipe` | Favourite a recipe from a week's menu by index (a protein swap favourites its own recipe). Confirm-gated, verified by re-reading the favourites. Undo with `hf_unfavorite_recipe`. |

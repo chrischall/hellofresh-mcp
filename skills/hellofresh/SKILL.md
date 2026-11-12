@@ -129,6 +129,15 @@ One box a week. For the next week still before its cutoff:
    resize it): `notes` says it keeps its size, and the picks fit it as it is.
 5. Report each write's `status`.
 
+**Several weeks at once.** `hf_plan_weeks` `{weeks: [{week, profile}, …]}`
+(1–6 weeks) gives each week's `hf_weekly_plan` answer in week order, never
+suggesting a recipe already planned for an earlier week, plus one summary line
+per week, the total of HelloFresh's own box prices (estimate-only weeks are
+named, not added) and `followUp` — each week's writes in order (resize, then
+pick). A skipped week is reported as skipped, not planned (use
+`hf_weekly_plan` for it to plan an unskip). The profile for each week is still
+your decision (step 1), made per week.
+
 **Monday reminder.** Deliveries are on Mondays and the cutoff is about five days
 earlier, so Monday is the day to plan the following week's box. When the user
 first sets this up, offer a recurring Monday reminder ("plan next week's
@@ -172,7 +181,7 @@ but `hf_healthcheck` is in the **food** group, with these intents:
 - **whats-on** — `hf_list_deliveries`, the group's one canonical read (its `view: "brief"` gives one line per week); `hf_cooking_plan` (not canonical: the week's cook order).
 - **lookup** — `hf_get_subscription`, `hf_get_delivery`, `hf_get_menu`, `hf_list_box_sizes`, `hf_recent_picks`, `hf_list_profiles`, `hf_get_recipe`, `hf_list_favorites`, `hf_list_ratings`.
 - **change** — `hf_select_meals`, `hf_set_week_size`, `hf_set_week_delivery_day`, `hf_skip_week`, `hf_unskip_week`, `hf_change_plan_size`, `hf_change_delivery_schedule`, `hf_favorite_recipe`, `hf_unfavorite_recipe`.
-- **other** — `hf_suggest_meals`, `hf_weekly_plan`.
+- **other** — `hf_suggest_meals`, `hf_weekly_plan`, `hf_plan_weeks`.
 
 So "what's on this week — and is the HelloFresh box coming?" reaches
 `hf_list_deliveries` through the group's intent call, not by name. There is no

@@ -114,10 +114,10 @@ const menuWeeks = (urls: URL[]) =>
   urls.filter((u) => u.pathname.endsWith('/menu')).map((u) => u.searchParams.get('week')).sort();
 
 describe('planner tools: registration', () => {
-  it('registers three read-only tools in the food domain; the two planners take a profile', async () => {
+  it('registers four read-only tools in the food domain; the single-week planners take a profile', async () => {
     harness = await createTestHarness((server) => registerPlannerTools(server, offlineDeps()));
     const tools = (await harness.client.listTools()).tools;
-    expect(tools.map((t) => t.name).sort()).toEqual(['hf_list_profiles', 'hf_suggest_meals', 'hf_weekly_plan']);
+    expect(tools.map((t) => t.name).sort()).toEqual(['hf_list_profiles', 'hf_plan_weeks', 'hf_suggest_meals', 'hf_weekly_plan']);
     for (const t of tools) {
       expect(t.annotations?.readOnlyHint, t.name).toBe(true);
       if (t.name === 'hf_list_profiles') {
@@ -127,6 +127,10 @@ describe('planner tools: registration', () => {
       }
       expect(t.annotations?.openWorldHint, t.name).toBe(true);
       expect((t._meta as Any).mint).toMatchObject({ domain: 'food', intent: 'other' });
+      if (t.name === 'hf_plan_weeks') {
+        expect(t.inputSchema.properties).toHaveProperty('weeks');
+        continue;
+      }
       expect(t.inputSchema.properties).toHaveProperty('profile');
       expect(t.inputSchema.properties).toHaveProperty('people');
     }
@@ -259,23 +263,24 @@ describe('hf_suggest_meals', () => {
   });
 });
 
+/** A synthetic calculator answer (ids + address included, as the real one). */
+const CALC = {
+  grandTotal: 21.41,
+  subTotal: 59.96,
+  taxAmount: 0.42,
+  shippingAmount: 12.99,
+  shippingDiscountAmount: 12.99,
+  discountAmount: 51.96,
+  couponCode: 'EXAMPLE65',
+  currency: 'USD',
+  customerID: 12345678,
+  subscriptionID: 90000001,
+  shippingAddress: { postcode: '00000', address1: '123 Example St' },
+  products: [{ handle: 'US-CBU-2-2-0', couponPercent: 65, couponCode: 'EXAMPLE65', charges: null }],
+};
+const CALC_ROUTE: Route = [/\/gw\/calculate$/, CALC];
+
 describe('hf_weekly_plan', () => {
-  /** A synthetic calculator answer (ids + address included, as the real one). */
-  const CALC = {
-    grandTotal: 21.41,
-    subTotal: 59.96,
-    taxAmount: 0.42,
-    shippingAmount: 12.99,
-    shippingDiscountAmount: 12.99,
-    discountAmount: 51.96,
-    couponCode: 'EXAMPLE65',
-    currency: 'USD',
-    customerID: 12345678,
-    subscriptionID: 90000001,
-    shippingAddress: { postcode: '00000', address1: '123 Example St' },
-    products: [{ handle: 'US-CBU-2-2-0', couponPercent: 65, couponCode: 'EXAMPLE65', charges: null }],
-  };
-  const CALC_ROUTE: Route = [/\/gw\/calculate$/, CALC];
 
   it('HelloFresh’s price for the size the plan NEEDS with the suggested picks, premiums added; no upcoming-list read', async () => {
     const { out, urls, tabBodies, text } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'couple', avoid_recent_weeks: 0 }, [
@@ -566,5 +571,123 @@ describe('planner: favourites and ratings', () => {
     expect(out.personal.favorites).toBeUndefined();
     expect(out.personal.ratings).toBe(0);
     expect(out.personal.unreadable.map((u: Any) => u.source)).toEqual(['favorites', 'ratings v2']);
+  });
+});
+
+describe('hf_plan_weeks', () => {
+  /** W50 as a running 2 × 2 week (the fixture has it skipped). */
+  const W50_RUNNING: Route = [/\/delivery_dates\/2026-W50$/, { ...W50, status: 'RUNNING' }];
+  const names = (week: Any) => week.picks.map((p: Any) => p.name);
+
+  it('plans each week in week order exactly as hf_weekly_plan, never repeating a recipe planned for an earlier week', async () => {
+    const { out, urls } = await call(
+      'hf_plan_weeks',
+      { weeks: [{ week: '2026-W50', profile: 'family' }, { week: '2026-W49', profile: 'family' }] },
+      [W50_RUNNING],
+    );
+    expect(out.weeks.map((w: Any) => w.week)).toEqual(['2026-W49', '2026-W50']);
+    // The first week is the single-week plan, unchanged.
+    const single = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family' }, [W50_RUNNING]);
+    expect(out.weeks[0]).toEqual(single.out);
+    // The second never repeats the first's picks, and says what it avoided.
+    const [w49, w50] = out.weeks;
+    expect(w50.picks.length).toBeGreaterThan(0);
+    expect(names(w50).filter((n: string) => names(w49).includes(n))).toEqual([]);
+    expect(w50.alternates.flatMap((a: Any) => a.options.map((o: Any) => o.name)).filter((n: string) => names(w49).includes(n))).toEqual([]);
+    expect(w50.avoidedFromEarlierWeeks).toEqual(names(w49));
+    expect(w49.avoidedFromEarlierWeeks).toBeUndefined();
+    // One summary line per week, then the total.
+    expect(out.summary.split('\n')).toEqual([
+      `2026-W49: ${w49.summary}`,
+      `2026-W50: ${w50.summary}`,
+      'No week has HelloFresh’s own price (2026-W49, 2026-W50: local estimate only), so there is no real total.',
+    ]);
+    expect(out.total).toEqual({
+      pricedWeeks: [],
+      notIncluded: [
+        { week: '2026-W49', reason: 'local estimate only' },
+        { week: '2026-W50', reason: 'local estimate only' },
+      ],
+    });
+    // The writes, per week in order: resize where needed, then pick.
+    expect(out.followUp).toEqual([
+      { week: '2026-W49', calls: w49.followUp },
+      { week: '2026-W50', calls: w50.followUp },
+    ]);
+    expect(w50.followUp.map((f: Any) => f.tool)).toEqual(['hf_set_week_size', 'hf_select_meals']);
+    expect(out.followUpNote).toMatch(/confirm-gated/);
+    expect(out.note).toMatch(/caller/);
+    expect(menuWeeks(urls)).toContain('2026-W50');
+  });
+
+  it('totals HelloFresh’s own prices (premiums included) across the weeks', async () => {
+    const { out } = await call(
+      'hf_plan_weeks',
+      { weeks: [{ week: '2026-W49', profile: 'couple' }, { week: '2026-W50', profile: 'couple' }] },
+      [W50_RUNNING, CALC_ROUTE],
+    );
+    const [a, b] = out.weeks;
+    const sum = Math.round((a.price.totalWithPremiums + b.price.totalWithPremiums) * 100) / 100;
+    expect(out.total).toEqual({ amount: sum, currency: 'USD', pricedWeeks: ['2026-W49', '2026-W50'] });
+    expect(out.summary.split('\n').at(-1)).toBe(`Total for 2 weeks (HelloFresh prices, premiums included): $${sum.toFixed(2)}.`);
+  });
+
+  it('a skipped week is reported as skipped with no suggestions; a locked week adds no writes', async () => {
+    const after49Cutoff = Date.parse('2026-11-27T00:00:00Z');
+    const { out, urls } = await call(
+      'hf_plan_weeks',
+      { weeks: [{ week: '2026-W49', profile: 'family' }, { week: '2026-W50', profile: 'couple' }] },
+      [CALC_ROUTE],
+      after49Cutoff,
+    );
+    const [w49, w50] = out.weeks;
+    expect(w49.locked).toMatch(/cutoff/);
+    expect(w50).toEqual({
+      week: '2026-W50',
+      profile: 'couple',
+      status: 'skipped',
+      delivery: { deliveryDate: '2026-12-07', cutoffDate: '2026-12-02T23:59:59-05:00', status: 'skipped' },
+      note: expect.stringMatching(/skipped.*hf_weekly_plan/),
+    });
+    expect(menuWeeks(urls)).not.toContain('2026-W50');
+    expect(out.followUp).toEqual([]);
+    expect(out.followUpNote).toBeUndefined();
+    expect(out.total).toEqual({
+      amount: w49.price.totalWithPremiums,
+      currency: 'USD',
+      pricedWeeks: ['2026-W49'],
+      notIncluded: [{ week: '2026-W50', reason: 'skipped' }],
+    });
+    expect(out.summary.split('\n')).toEqual([
+      `2026-W49: ${w49.summary}`,
+      '2026-W50: skipped — not planned.',
+      `Total for 1 week (HelloFresh prices, premiums included): $${w49.price.totalWithPremiums.toFixed(2)} — not included: 2026-W50 (skipped).`,
+    ]);
+  });
+
+  it('a week with no price for its size is named as such', async () => {
+    const { out } = await call('hf_plan_weeks', { weeks: [{ week: '2026-W49', profile: 'couple' }] }, [
+      [/deliveries$/, { items: [] }],
+      [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, product: undefined }] }],
+    ]);
+    expect(out.weeks[0].priceWarning).toBeDefined();
+    expect(out.total).toEqual({ pricedWeeks: [], notIncluded: [{ week: '2026-W49', reason: 'no price' }] });
+  });
+
+  it('rejects repeated weeks, and an unknown profile before any HelloFresh call', async () => {
+    const twice = await call('hf_plan_weeks', { weeks: [{ week: '2026-W49', profile: 'family' }, { week: '2026-W49', profile: 'couple' }] });
+    expect(twice.result.isError).toBe(true);
+    expect(twice.text).toMatch(/once/);
+    expect(twice.urls).toEqual([]);
+    const unknown = await call('hf_plan_weeks', { weeks: [{ week: '2026-W49', profile: 'family' }, { week: '2026-W50', profile: 'nobody' }] });
+    expect(unknown.result.isError).toBe(true);
+    expect(unknown.text).toMatch(/nobody/);
+    expect(unknown.urls).toEqual([]);
+    const none = await call('hf_plan_weeks', { weeks: [] });
+    expect(none.result.isError).toBe(true);
+    const seven = await call('hf_plan_weeks', {
+      weeks: Array.from({ length: 7 }, (_, i) => ({ week: `2026-W${40 + i}`, profile: 'family' })),
+    });
+    expect(seven.result.isError).toBe(true);
   });
 });
