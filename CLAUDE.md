@@ -38,7 +38,7 @@ npm run test:coverage  # 100% thresholds, run by CI
   A new tool also needs a `manifest.json` `tools` entry, a README row, a line
   in `skills/hellofresh/SKILL.md` and an intent in `tests/hints.test.ts` (all
   tested), and `tests/server-boot.test.ts` `MIN_TOOLS` raised.
-- `src/tools/writes.ts` — every write is plan → `confirmWrite` → execute →
+- `src/tools/writes/` (`shared.ts` gate + checks, `week.ts`, `plan.ts`) — every write is plan → `confirmWrite` → execute →
   re-read, answering `status: verified | unverified`. Its own `registerGated`
   wraps the flow because `registerWrite` cannot carry `_meta`.
 - `src/planner.ts` — pure scoring for `hf_suggest_meals` / `hf_weekly_plan`,

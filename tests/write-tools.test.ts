@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createTestHarness, parseToolResult, type TestHarness } from '@chrischall/mcp-utils/test';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { HelloFreshClient, type ClientSession } from '../src/client.js';
-import { registerWriteTools } from '../src/tools/writes.js';
+import { registerWriteTools } from '../src/tools/writes/index.js';
 import { sleepMs } from '../src/tools/shared.js';
 import type { ToolDeps } from '../src/tools/index.js';
 import { offlineDeps } from './helpers.js';
