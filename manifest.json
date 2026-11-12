@@ -167,7 +167,11 @@
     },
     {
       "name": "hf_cooking_plan",
-      "description": "Order a week's picked meals for cooking, most perishable first (fish, shellfish, ... vegetarian last), with a suggested day, why, time, key ingredients and recipe card; read-only."
+      "description": "Order a week's picked meals for cooking, most perishable first (fish, shellfish, ... vegetarian last), with a suggested day, why, time, key ingredients, pantry staples and recipe card; read-only."
+    },
+    {
+      "name": "hf_pantry_check",
+      "description": "List the pantry staples HelloFresh does not ship (salt, oil, butter...) for a week's picked meals, summed per ingredient and unit, with a one-line summary; read-only."
     },
     {
       "name": "hf_promo_status",

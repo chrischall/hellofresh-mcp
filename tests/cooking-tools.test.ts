@@ -110,10 +110,10 @@ function menuSelecting(picks: Record<number, number>) {
 }
 
 describe('cooking tools: registration', () => {
-  it('registers hf_get_recipe (lookup) and hf_cooking_plan (whats-on, not canonical): read-only, open-world, untrusted-warned', async () => {
+  it('registers hf_get_recipe and hf_pantry_check (lookup) and hf_cooking_plan (whats-on), none canonical: read-only, open-world, untrusted-warned', async () => {
     harness = await createTestHarness((server) => registerCookingTools(server, offlineDeps()));
     const tools = (await harness.client.listTools()).tools;
-    expect(tools.map((t) => t.name).sort()).toEqual(['hf_cooking_plan', 'hf_get_recipe']);
+    expect(tools.map((t) => t.name).sort()).toEqual(['hf_cooking_plan', 'hf_get_recipe', 'hf_pantry_check']);
     for (const t of tools) {
       expect(t.annotations?.readOnlyHint, t.name).toBe(true);
       expect(t.annotations?.openWorldHint, t.name).toBe(true);
@@ -122,7 +122,7 @@ describe('cooking tools: registration', () => {
       expect(t.description).toMatch(/untrusted/);
     }
     const intent = Object.fromEntries(tools.map((t) => [t.name, (t._meta as Any).mint.intent]));
-    expect(intent).toEqual({ hf_get_recipe: 'lookup', hf_cooking_plan: 'whats-on' });
+    expect(intent).toEqual({ hf_get_recipe: 'lookup', hf_cooking_plan: 'whats-on', hf_pantry_check: 'lookup' });
   });
 });
 
@@ -227,6 +227,7 @@ describe('hf_cooking_plan', () => {
     expect(tilapia.ingredients).toHaveLength(8);
     expect(tilapia.moreIngredients).toBe(2);
     expect(tilapia.ingredients).not.toContain('Salt');
+    expect(tilapia.pantry).toEqual(['Salt']);
     expect(tilapia.cardLink).toBe('https://example.invalid/card.pdf');
     expect(shrimp).toMatchObject({ ingredients: ['Shrimp', 'Linguine', 'Pesto'], totalMinutes: 20 });
     expect(shrimp.moreIngredients).toBeUndefined();
@@ -252,6 +253,7 @@ describe('hf_cooking_plan', () => {
     const steakShrimp = out.dishes[2];
     expect(steakShrimp.ingredientsError).toMatch(/404/);
     expect(steakShrimp.ingredients).toBeUndefined();
+    expect(steakShrimp.pantry).toBeUndefined();
     expect(steakShrimp.why).toMatch(/shorter total time first/);
     expect(out.dishes[3].cardLink).toBeUndefined();
     expect(out.dishes[5].day).toBe('Sat');
@@ -305,5 +307,168 @@ describe('hf_cooking_plan', () => {
       [8, 'veggie'],
     ]);
     expect(out.dishes[0].ingredientsError).toMatch(/no recipe id/);
+  });
+});
+
+describe('hf_pantry_check', () => {
+  /** A synthetic detail whose not-shipped staples carry amounts for 2 and 4 servings. */
+  const staples = (name: string, pantry: Array<{ id: string; name: string; at2?: [number | null, string]; at4?: [number | null, string] }>) => ({
+    name,
+    ingredients: [{ id: 'main', name: 'Main', shipped: true }, ...pantry.map((p) => ({ id: p.id, name: p.name, shipped: false }))],
+    yields: [2, 4].map((y) => ({
+      yields: y,
+      ingredients: [
+        { id: 'main', amount: y, unit: 'ounce' },
+        ...pantry.flatMap((p) => {
+          const at = y === 2 ? p.at2 : p.at4;
+          return at ? [{ id: p.id, amount: at[0], unit: at[1] }] : [];
+        }),
+      ],
+    })),
+  });
+  const PANTRY: Record<string, unknown> = {
+    [recipeIdOf(71)]: staples('Tilapia Chowder', [
+      { id: 'oil', name: 'Cooking Oil', at2: [1, 'teaspoon'], at4: [2, 'teaspoon'] },
+      { id: 'butter', name: 'Butter', at2: [1, 'tablespoon'], at4: [2, 'tablespoon'] },
+      { id: 'salt', name: 'Salt', at2: [null, 'unit'], at4: [null, 'unit'] },
+    ]),
+    [recipeIdOf(67)]: staples('Shrimp Linguine', [
+      { id: 'oil', name: 'Cooking Oil', at2: [1, 'teaspoon'], at4: [2, 'teaspoon'] },
+      { id: 'butter', name: 'Butter', at4: [3, 'ounce'] },
+      { id: 'pepper', name: 'Black Pepper', at4: [null, 'unit'] },
+      { id: 'salt', name: 'Salt' },
+    ]),
+  };
+  const pantryRecipes: Route = [
+    /\/recipes\/recipes\/[^/]+$/,
+    (url: URL) => {
+      const body = PANTRY[url.pathname.split('/').pop()!];
+      return body ? json(body) : json({ error: 'no such recipe' }, 404);
+    },
+  ];
+
+  it('aggregates the not-shipped ingredients across the picks at the nearest yield, with a one-line summary', async () => {
+    const { result } = await call('hf_pantry_check', { week: '2026-W49' }, [pantryRecipes]);
+    const out = parseToolResult<Any>(result);
+    expect(out.untrusted_content).toBe(true);
+    expect(out).toMatchObject({ week: '2026-W49', status: 'running', servings: 6 });
+    const tilapia = 'Chesapeake Tilapia & Corn Chowder';
+    const shrimp = 'Pesto Shrimp Linguine with Lemony Panko Topping';
+    const sorted = out.items.map((i: Any) => ({ ...i, usedIn: [...i.usedIn].sort() }));
+    expect(sorted).toEqual([
+      { name: 'Black Pepper', toTaste: true, usedIn: [shrimp] },
+      { name: 'Butter', total: 3, unit: 'ounce', usedIn: [shrimp] },
+      { name: 'Butter', total: 2, unit: 'tablespoon', usedIn: [tilapia] },
+      { name: 'Cooking Oil', total: 4, unit: 'teaspoon', usedIn: [tilapia, shrimp] },
+      { name: 'Salt', toTaste: true, usedIn: [tilapia, shrimp] },
+    ]);
+    expect(out.summary).toBe(
+      'From your pantry for 2026-W49: Black Pepper (to taste), Butter (3 oz), Butter (2 tbsp), Cooking Oil (4 tsp), Salt (to taste).',
+    );
+    // 6 servings is not listed: the 4-serving amounts are used, as hf_get_recipe does, and said so.
+    expect(out.notes).toHaveLength(2);
+    expect(out.notes[0]).toMatch(/no 6-serving amounts.*4 servings/);
+    expect(out.dishes).toBeUndefined();
+  });
+
+  it('a meal picked twice doubles its amounts', async () => {
+    const { result } = await call('hf_pantry_check', { week: '2026-W49' }, [pantryRecipes, [/\/my-deliveries\/menu$/, menuSelecting({ 71: 2, 67: 1 })]]);
+    const items = parseToolResult<Any>(result).items;
+    expect(items.find((i: Any) => i.name === 'Cooking Oil')).toMatchObject({ total: 6, unit: 'teaspoon' });
+    expect(items.find((i: Any) => i.unit === 'tablespoon')).toMatchObject({ name: 'Butter', total: 4 });
+  });
+
+  it('an exact yield adds no note; view full lists each dish’s staples with the same amounts hf_get_recipe shows', async () => {
+    const W49_FOR_4 = { ...W49, product: { ...W49.product, specs: { meals: 2, size: 4 } } };
+    const routes: Route[] = [pantryRecipes, [/delivery_dates\/2026-W49$/, W49_FOR_4]];
+    const out = parseToolResult<Any>((await call('hf_pantry_check', { week: '2026-W49', view: 'full' }, routes)).result);
+    expect(out.servings).toBe(4);
+    expect(out.notes).toBeUndefined();
+    const chowder = out.dishes.find((d: Any) => d.index === 71);
+    expect(chowder).toEqual({
+      index: 71,
+      name: 'Chesapeake Tilapia & Corn Chowder',
+      quantity: 1,
+      amountsForServings: 4,
+      pantry: [
+        { name: 'Cooking Oil', amount: 2, unit: 'teaspoon' },
+        { name: 'Butter', amount: 2, unit: 'tablespoon' },
+        { name: 'Salt', unit: 'unit' },
+      ],
+    });
+    const recipe = parseToolResult<Any>((await call('hf_get_recipe', { week: '2026-W49', index: 71 }, routes)).result).recipe;
+    expect(recipe.ingredients.filter((i: Any) => i.notInBox).map(({ notInBox: _n, ...i }: Any) => i)).toEqual(chowder.pantry);
+  });
+
+  it('a skipped week says so, with an empty list and no menu read', async () => {
+    const { result, urls } = await call('hf_pantry_check', { week: '2026-W50' });
+    const out = parseToolResult<Any>(result);
+    expect(out).toMatchObject({ week: '2026-W50', status: 'skipped', items: [] });
+    expect(out.summary).toMatch(/skipped/);
+    expect(urls.some((u) => u.pathname.includes('/my-deliveries/menu'))).toBe(false);
+  });
+
+  it('no picks yet says so', async () => {
+    const out = parseToolResult<Any>((await call('hf_pantry_check', { week: '2026-W49' }, [[/\/my-deliveries\/menu$/, menuSelecting({})]])).result);
+    expect(out.items).toEqual([]);
+    expect(out.summary).toMatch(/No meals are picked for 2026-W49.*hf_select_meals/);
+  });
+
+  it('a recipe that cannot be read is named and the rest still aggregate; a dish is named from the menu, the recipe, else its index', async () => {
+    const menu = {
+      week: '2026-W49',
+      meals: [
+        { index: 7, selection: { quantity: 1 } },
+        { index: 8, recipe: { id: 'ffffffffffffffffffffffff', name: 'Veggie Bowl' }, selection: { quantity: 1 } },
+        { index: 9, recipe: { id: 'eeeeeeeeeeeeeeeeeeeeeeee' }, selection: { quantity: 1 } },
+        { index: 10, recipe: { id: 'dddddddddddddddddddddddd' }, selection: { quantity: 1 } },
+        { index: 11, recipe: { id: 'cccccccccccccccccccccccc' }, selection: { quantity: 1 } },
+      ],
+    };
+    const bodies: Record<string, unknown> = {
+      ffffffffffffffffffffffff: {
+        name: 'Veggie Bowl',
+        ingredients: [{ id: 'r', name: 'Rice', shipped: true }],
+        yields: [{ yields: 6, ingredients: [{ id: 'r', amount: 1, unit: 'cup' }] }],
+      },
+      dddddddddddddddddddddddd: { name: 'Synthetic Soup', ingredients: [{ id: 's', name: 'Salt', shipped: false }] },
+      cccccccccccccccccccccccc: { ingredients: [{ id: 'p', name: 'Black Pepper', shipped: false }] },
+    };
+    const recipes: Route = [
+      /\/recipes\/recipes\/[^/]+$/,
+      (url: URL) => {
+        const body = bodies[url.pathname.split('/').pop()!];
+        return body ? json(body) : json({ error: 'gone' }, 404);
+      },
+    ];
+    const out = parseToolResult<Any>((await call('hf_pantry_check', { week: '2026-W49', view: 'full' }, [recipes, [/\/my-deliveries\/menu$/, menu]])).result);
+    expect(out.items).toEqual([
+      // These synthetic recipes list no yields at all: the amounts are unknown, not "to taste".
+      { name: 'Black Pepper', amountUnknown: true, usedIn: ['#11'] },
+      { name: 'Salt', amountUnknown: true, usedIn: ['Synthetic Soup'] },
+    ]);
+    expect(out.unread).toEqual([
+      { index: 7, reason: expect.stringMatching(/no recipe id/) },
+      { index: 9, reason: expect.stringMatching(/404/) },
+    ]);
+    expect(out.summary).toMatch(/^From your pantry for 2026-W49: Black Pepper \(amount not listed\), Salt \(amount not listed\)\./);
+    expect(out.summary).toMatch(/2 recipes could not be read \(#7, #9\)/);
+    expect(out.notes).toEqual([expect.stringMatching(/^#10 Synthetic Soup: .*no ingredient amounts/), expect.stringMatching(/^#11: /)]);
+    expect(out.dishes[0]).toEqual({ index: 8, name: 'Veggie Bowl', quantity: 1, amountsForServings: 6, pantry: [] });
+    expect(out.dishes[1]).toEqual({ index: 10, name: 'Synthetic Soup', quantity: 1, pantry: [{ name: 'Salt', amountUnknown: true }] });
+  });
+
+  it('nothing from the pantry says so; one unread recipe is singular', async () => {
+    const menu = {
+      week: '2026-W49',
+      meals: [
+        { index: 7, selection: { quantity: 1 } },
+        { index: 8, recipe: { id: 'ffffffffffffffffffffffff', name: 'Veggie Bowl' }, selection: { quantity: 1 } },
+      ],
+    };
+    const recipes: Route = [/\/recipes\/recipes\/[^/]+$/, { name: 'Veggie Bowl', ingredients: [{ id: 'r', name: 'Rice', shipped: true }] }];
+    const out = parseToolResult<Any>((await call('hf_pantry_check', { week: '2026-W49' }, [recipes, [/\/my-deliveries\/menu$/, menu]])).result);
+    expect(out.items).toEqual([]);
+    expect(out.summary).toMatch(/^Nothing from your pantry for 2026-W49.*1 recipe could not be read \(#7\)/);
   });
 });

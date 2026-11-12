@@ -4,7 +4,7 @@ Unofficial HelloFresh (US) MCP (`@chrischall/hellofresh-mcp`): subscription,
 delivery weeks, menus and meal picks, plus confirm-gated writes (pick meals,
 one-week size / delivery day, skip / unskip, permanent plan size and schedule,
 favourite / un-favourite a recipe), favourites and ratings reads, cooking-day
-reads (recipe detail, cook order), and four read-only planner tools
+reads (recipe detail, cook order, pantry check), and four read-only planner tools
 (profiles, suggest, weekly plan, multi-week plan). stdio
 transport, tool prefix `hf_`.
 
@@ -51,7 +51,8 @@ npm run test:coverage  # 100% thresholds, run by CI
   verified by re-reading the list) and the ratings list. The planner reads both
   best effort (`readPersonal` in `src/tools/shared.ts`).
 - `src/cooking.ts` + `src/tools/cooking.ts` — `hf_get_recipe` /
-  `hf_cooking_plan`: a pure recipe projection and cook-order ranking, and the
+  `hf_cooking_plan` / `hf_pantry_check`: a pure recipe projection, cook-order
+  ranking and pantry aggregation, and the
   read-only tools (recipe text is third-party: answered as untrusted content).
 - `src/tools/promo.ts` — `hf_promo_status`: the voucher's boxes used/left and each
   running week's real discount from the calculator (bounded by `PRICE_CONCURRENCY`),
