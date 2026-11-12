@@ -2,8 +2,9 @@
 
 Unofficial HelloFresh (US) MCP (`@chrischall/hellofresh-mcp`): subscription,
 delivery weeks, menus and meal picks, plus confirm-gated writes (pick meals,
-one-week size / delivery day, skip / unskip, permanent plan size and schedule)
-and three read-only planner tools (profiles, suggest, weekly plan). stdio
+one-week size / delivery day, skip / unskip, permanent plan size and schedule,
+favourite / un-favourite a recipe), favourites and ratings reads, and three
+read-only planner tools (profiles, suggest, weekly plan). stdio
 transport, tool prefix `hf_`.
 
 ## Commands
@@ -41,6 +42,9 @@ npm run test:coverage  # 100% thresholds, run by CI
 - `src/tools/writes.ts` — every write is plan → `confirmWrite` → execute →
   re-read, answering `status: verified | unverified`. Its own `registerGated`
   wraps the flow because `registerWrite` cannot carry `_meta`.
+- `src/tools/favorites.ts` — favourites (list + confirm-gated add/remove,
+  verified by re-reading the list) and the ratings list. The planner reads both
+  best effort (`readPersonal` in `src/tools/shared.ts`).
 - `src/planner.ts` — pure scoring for `hf_suggest_meals` / `hf_weekly_plan`,
   driven by a planner profile (`src/profiles.ts`: `HELLOFRESH_PROFILES` →
   `HELLOFRESH_PROFILES_FILE` → built-in `couple` / `family`, parsed once, a bad
@@ -62,6 +66,10 @@ npm run test:coverage  # 100% thresholds, run by CI
   value captured from a live session before committing. Recipes on the menu
   fixture are public and fine.
 - Out of scope, by decision: cancelling the subscription (irreversible — the
-  website only), the meal-preference preset (the API refuses it), add-ons.
+  website only), the meal-preference preset (the API refuses it), add-ons, and
+  RATING a recipe: the rate call (`PUT /cfs/{v2|v3}/ratings/recipe/{id}`) is not
+  live-verified — it needs a delivered box — so only the ratings LIST is read
+  (`hf_list_ratings`, item shape unobserved: parsed defensively). Add the write
+  only after it is verified in docs/HELLOFRESH-API.md.
 - US market only (`country=US`, `locale=en-US`).
 - Tests make no network calls.

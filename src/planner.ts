@@ -10,6 +10,12 @@
 //     the cap only lightly penalised;
 //   - premiums over the profile's per-serving cap are excluded; under it they
 //     cost points in proportion to the upcharge × servings.
+//   - favourites: a recipe the user favourited (the dish's own recipe or, for
+//     a protein swap, its base recipe) is boosted;
+//   - ratings: a recipe the user rated 2 or lower (on either ratings scale) is
+//     NEVER suggested (it is listed in `excluded` with the rating).
+// HelloFresh's own `averageRating` is not used: the weekly menu does not carry
+// it, and reading it means one recipe-detail call per dish — not cheap.
 // Picks then favour protein diversity (distinct categories, and within
 // Seafood distinct kinds — e.g. one shrimp + one fish) and never repeat a
 // recently picked recipe. Each recipe is ONE dish: a base course in the allowed
@@ -24,11 +30,19 @@ import { profileLabel } from './profiles.js';
 /** The bonus for a pick whose protein is not yet in the box. */
 const DIVERSITY_BONUS = 15;
 const QUICK_MINUTES = 30;
+/** The bonus for a recipe the user favourited. */
+const FAVORITE_BONUS = 25;
+/** A user rating at or below this (either scale) means never suggest the recipe. */
+export const LOW_RATING = 2;
 /** Cuisines that do not count as adventurous. */
 const FAMILIAR_CUISINES = new Set(['American', 'Italian', 'Irish', 'British']);
 
 export interface Candidate {
   index: number;
+  /** The dish's own recipe id (a swap's own, else the course's). */
+  recipeId?: string;
+  /** The user favourited this recipe (or, for a swap, its base recipe). */
+  favorite?: true;
   /** Set when this dish is a protein swap of course `baseIndex`. */
   baseIndex?: number;
   name?: string;
@@ -65,6 +79,10 @@ export interface SuggestOptions {
   avoidNames?: readonly string[];
   /** Highest premium per serving, cents (default: the profile's cap). */
   maxPremiumPerServingCents?: number;
+  /** Recipe ids the user favourited: boosted. */
+  favoriteRecipeIds?: readonly string[];
+  /** The user's own recipe ratings: a rating ≤ LOW_RATING means never suggest it. */
+  ratings?: ReadonlyArray<{ recipeId: string; rating: number; scale: string }>;
 }
 
 export interface Suggestion {
@@ -88,10 +106,28 @@ const normalName = (name: string) => name.trim().toLowerCase().replace(/\s+/g, '
 
 const courseOf = (c: Candidate) => c.baseIndex ?? c.index;
 
-type Dish = Pick<Candidate, 'index' | 'baseIndex' | 'name' | 'category' | 'seafoodKind' | 'premiumPerServingCents' | 'selected'>;
+type Dish = Pick<
+  Candidate,
+  'index' | 'baseIndex' | 'recipeId' | 'name' | 'category' | 'seafoodKind' | 'premiumPerServingCents' | 'selected'
+> & { double?: boolean };
 
-/** A double-protein swap ("2x Shrimp", "… with 2x Tilapia"): an upgrade, not a swap. */
-const isDouble = (v: Pick<ProjectedVariant, 'title' | 'name'>) => /\b2x\b/i.test(`${v.title ?? ''} ${v.name ?? ''}`);
+const proteinOf = (d: Pick<Dish, 'category' | 'seafoodKind'>) => d.seafoodKind ?? d.category ?? 'unknown';
+
+const titledDouble = (v: Pick<ProjectedVariant, 'title' | 'name'>) => /\b2x\b/i.test(`${v.title ?? ''} ${v.name ?? ''}`);
+
+/**
+ * A double-protein swap — an upgrade, not a swap: "2x" in its title or name
+ * ("2x Shrimp", "… with 2x Tilapia"), OR a premium above the cheapest
+ * single-protein swap of the SAME protein on the same base course (e.g.
+ * "Extra Shrimp" at +$3.99 next to "Shrimp" at +$0). A different protein at a
+ * premium (Salmon next to Shrimp) is an ordinary swap.
+ */
+export function isDoubleProtein(variant: ProjectedVariant, siblings: readonly ProjectedVariant[]): boolean {
+  if (titledDouble(variant)) return true;
+  const protein = proteinOf(variant);
+  const singles = siblings.filter((s) => !titledDouble(s) && proteinOf(s) === protein).map((s) => s.premiumPerServingCents);
+  return singles.length > 0 && variant.premiumPerServingCents > Math.min(...singles);
+}
 
 /**
  * One dish per recipe (a base course and its protein swaps are ONE recipe):
@@ -107,6 +143,7 @@ function dishes(menu: ProjectedMenu, allowed: (category: string | null) => boole
         {
           dish: {
             index: course.index,
+            recipeId: course.recipeId,
             name: course.name,
             category: course.category,
             seafoodKind: course.seafoodKind,
@@ -117,15 +154,18 @@ function dishes(menu: ProjectedMenu, allowed: (category: string | null) => boole
         },
       ];
     }
+    const double = (v: ProjectedVariant) => isDoubleProtein(v, course.variants);
     const [swap] = course.variants
       .filter((v) => allowed(v.category))
-      .sort((a, b) => Number(isDouble(a)) - Number(isDouble(b)) || a.premiumPerServingCents - b.premiumPerServingCents || a.index - b.index);
+      .sort((a, b) => Number(double(a)) - Number(double(b)) || a.premiumPerServingCents - b.premiumPerServingCents || a.index - b.index);
     if (!swap) return [];
     return [
       {
         dish: {
           index: swap.index,
           baseIndex: course.index,
+          recipeId: swap.recipeId ?? course.recipeId,
+          ...(double(swap) ? { double: true } : {}),
           name: swap.name ?? swap.title,
           category: swap.category,
           seafoodKind: swap.seafoodKind,
@@ -138,9 +178,10 @@ function dishes(menu: ProjectedMenu, allowed: (category: string | null) => boole
   });
 }
 
-const proteinOf = (d: Pick<Dish, 'category' | 'seafoodKind'>) => d.seafoodKind ?? d.category ?? 'unknown';
+/** The recipe ids a dish stands for: its own and, for a swap, its base course's. */
+const recipeIdsOf = (dish: Dish, course: ProjectedMeal) => [dish.recipeId, course.recipeId].filter((id): id is string => !!id);
 
-function score(dish: Dish, course: ProjectedMeal, profile: Profile, people: number): Candidate {
+function score(dish: Dish, course: ProjectedMeal, profile: Profile, people: number, favorite: boolean): Candidate {
   const reasons: string[] = [];
   let points = 0;
   const add = (n: number, why: string) => {
@@ -150,6 +191,8 @@ function score(dish: Dish, course: ProjectedMeal, profile: Profile, people: numb
   const minutes = course.totalMinutes;
   const premiumBoxCents = dish.premiumPerServingCents * people;
 
+  if (dish.double) reasons.push('double-protein upgrade (no single-protein swap fits)');
+  if (favorite) add(FAVORITE_BONUS, 'one of your favorites');
   if (profile.kidFriendly) {
     if (course.kidFriendly) add(30, 'kid friendly');
     if (course.tags.some((t) => /spicy/i.test(t))) add(-10, 'spicy');
@@ -166,8 +209,10 @@ function score(dish: Dish, course: ProjectedMeal, profile: Profile, people: numb
     add(profile.adventurous ? 5 - Math.round(premiumBoxCents / 200) : -Math.round(premiumBoxCents / 100), why);
   }
 
+  const { double: _double, ...rest } = dish;
   return {
-    ...dish,
+    ...rest,
+    ...(favorite ? { favorite: true as const } : {}),
     protein: proteinOf(dish),
     kidFriendly: course.kidFriendly,
     quick: course.quick,
@@ -207,19 +252,26 @@ export function suggestMeals(menu: ProjectedMenu, opts: SuggestOptions): Suggest
   const avoidNames = new Set((opts.avoidNames ?? []).map(normalName));
 
   const allowed = (category: string | null) => !categories || categories.has((category ?? '').toLowerCase());
+  const favorites = new Set(opts.favoriteRecipeIds ?? []);
+  const lowRated = new Map<string, { rating: number; scale: string }>();
+  for (const r of opts.ratings ?? []) if (r.rating <= LOW_RATING && !lowRated.has(r.recipeId)) lowRated.set(r.recipeId, r);
 
   const excluded: Exclusion[] = [];
   const eligible: Candidate[] = [];
   for (const { dish, course } of dishes(menu, allowed)) {
-    const reason = avoidIndexes.has(dish.index)
-      ? 'avoided by request'
+    const ids = recipeIdsOf(dish, course);
+    const low = ids.map((id) => lowRated.get(id)).find((r) => r !== undefined);
+    const reason = low
+      ? `you rated it ${low.rating} (${low.scale} scale): low-rated recipes are never suggested`
+      : avoidIndexes.has(dish.index)
+        ? 'avoided by request'
       : dish.name && avoidNames.has(normalName(dish.name))
         ? 'picked in a recent week'
         : dish.premiumPerServingCents > cap
           ? `premium ${dollars(dish.premiumPerServingCents)}/serving over the ${dollars(cap)} cap`
           : undefined;
     if (reason) excluded.push({ index: dish.index, name: dish.name, reason });
-    else eligible.push(score(dish, course, profile, people));
+    else eligible.push(score(dish, course, profile, people, ids.some((id) => favorites.has(id))));
   }
   const ranked = eligible.sort((a, b) => b.score - a.score || a.index - b.index);
 

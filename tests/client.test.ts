@@ -372,3 +372,46 @@ describe('HelloFreshClient with the real session', () => {
     expect(seen).toEqual(['Bearer access-OLD', 'Bearer access-NEW']);
   });
 });
+
+describe('HelloFreshClient favorites and ratings', () => {
+  const RECIPE = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+
+  it('lists favorites with country/locale', async () => {
+    const body = { skip: 0, take: 50, total: 1, count: 1, items: [{ id: 'f1', object_type: 'recipe', object_id: RECIPE }] };
+    const { client, calls } = setup([json(body)]);
+    await expect(client.listFavorites()).resolves.toEqual(body);
+    expect(calls[0]!.url).toBe(`${API_BASE}/cfs/v2/favorites/recipe?country=US&locale=en-US`);
+    expect(calls[0]!.method).toBe('GET');
+  });
+
+  it('adds a favorite with PUT (204, no body), passing the week when given', async () => {
+    const { client, calls } = setup([new Response(null, { status: 204 }), new Response(null, { status: 204 })]);
+    await expect(client.addFavorite(RECIPE, WEEK)).resolves.toBeUndefined();
+    await client.addFavorite(RECIPE);
+    expect(calls[0]!.method).toBe('PUT');
+    expect(calls[0]!.url).toBe(`${API_BASE}/cfs/v2/favorites/recipe/${RECIPE}?country=US&locale=en-US&weekId=${WEEK}`);
+    expect(calls[0]!.body).toBeUndefined();
+    expect(calls[1]!.url).toBe(`${API_BASE}/cfs/v2/favorites/recipe/${RECIPE}?country=US&locale=en-US`);
+  });
+
+  it('removes a favorite with DELETE (204)', async () => {
+    const { client, calls } = setup([new Response(null, { status: 204 })]);
+    await expect(client.removeFavorite(RECIPE)).resolves.toBeUndefined();
+    expect(calls[0]!.method).toBe('DELETE');
+    expect(calls[0]!.url).toBe(`${API_BASE}/cfs/v2/favorites/recipe/${RECIPE}?country=US&locale=en-US`);
+  });
+
+  it('a 5xx after a favorite write is WriteOutcomeUnknownError', async () => {
+    const { client } = setup([json({ error: 'boom' }, 502)]);
+    await expect(client.removeFavorite(RECIPE)).rejects.toBeInstanceOf(WriteOutcomeUnknownError);
+  });
+
+  it('lists ratings on the v2 or v3 scale with the documented lowercase country', async () => {
+    const empty = { skip: 0, take: 50, total: 0, count: 0, items: [] };
+    const { client, calls } = setup([json(empty), json(empty)]);
+    await expect(client.listRatings('v2')).resolves.toEqual(empty);
+    await client.listRatings('v3');
+    expect(calls[0]!.url).toBe(`${API_BASE}/cfs/v2/ratings/recipe?country=us&locale=en-US`);
+    expect(calls[1]!.url).toBe(`${API_BASE}/cfs/v3/ratings/recipe?country=us&locale=en-US`);
+  });
+});

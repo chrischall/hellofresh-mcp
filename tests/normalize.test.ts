@@ -5,7 +5,9 @@ import {
   parseDurationMinutes,
   parseSku,
   projectDelivery,
+  projectFavorites,
   projectMenu,
+  projectRatings,
   projectSubscription,
   seafoodKindOf,
   type ProjectedDelivery,
@@ -202,6 +204,7 @@ describe('projectMenu (real W49 menu, trimmed)', () => {
     const [shrimp2x, salmon, chicken, lobster] = meal(67).variants;
     expect(shrimp2x).toEqual({
       index: 560,
+      recipeId: '6ab562a17b08fde232914bee',
       title: '2x Shrimp',
       name: 'Pesto 2x Shrimp Linguine with Lemony Panko Topping',
       category: 'Seafood',
@@ -313,5 +316,72 @@ describe('estimateBoxTotal', () => {
   it('treats missing prices as zero', () => {
     const empty: ProjectedDelivery = projectDelivery({});
     expect(estimateBoxTotal(empty, [], undefined, 1)).toMatchObject({ productCents: 0, feeCents: 0, shippingCents: 0, totalCents: 0 });
+  });
+});
+
+describe('projectMenu recipe ids', () => {
+  it('carries each base course’s and each swap’s recipe id (the favourites/ratings key)', () => {
+    const p = projectMenu(menu);
+    const raw = new Map((menu.meals ?? []).map((m) => [m.index, m.recipe?.id]));
+    const course = p.meals.find((m) => m.index === 67)!;
+    expect(course.recipeId).toBe(raw.get(67));
+    expect(course.variants.find((v) => v.index === 560)!.recipeId).toBe(raw.get(560));
+    expect(course.recipeId).toMatch(/^[0-9a-f]{24}$/);
+  });
+});
+
+describe('projectFavorites', () => {
+  it('keeps recipe favourites as recipe id + date, never the customer uuid', () => {
+    const out = projectFavorites({
+      total: 3,
+      count: 3,
+      items: [
+        { id: 'f1', object_type: 'recipe', object_id: 'aaaaaaaaaaaaaaaaaaaaaaaa', created_at: '2026-11-01T00:00:00Z', customer_uuid: 'secret' } as never,
+        { id: 'f2', object_type: 'menu', object_id: 'bbbbbbbbbbbbbbbbbbbbbbbb' },
+        { id: 'f3', object_id: 'cccccccccccccccccccccccc' },
+        { id: 'f4', object_type: 'recipe' },
+      ],
+    });
+    expect(out).toEqual({
+      total: 3,
+      favorites: [
+        { recipeId: 'aaaaaaaaaaaaaaaaaaaaaaaa', favoritedAt: '2026-11-01T00:00:00Z' },
+        { recipeId: 'cccccccccccccccccccccccc' },
+      ],
+    });
+    expect(JSON.stringify(out)).not.toContain('secret');
+  });
+
+  it('an empty answer is no favourites', () => {
+    expect(projectFavorites({})).toEqual({ favorites: [] });
+  });
+});
+
+describe('projectRatings (item shape not yet observed: defensive)', () => {
+  it('reads recipe id (object_id) + numeric rating, skipping and counting anything else', () => {
+    const out = projectRatings(
+      {
+        items: [
+          { object_id: 'aaaaaaaaaaaaaaaaaaaaaaaa', rating: 2, hellofresh_week: '2026-W45', customer_uuid: 'secret' },
+          { object_id: 'bbbbbbbbbbbbbbbbbbbbbbbb', rating: '5' },
+          { object_id: 'cccccccccccccccccccccccc' },
+          { rating: 4 },
+          null,
+          'junk',
+          { object_id: 'dddddddddddddddddddddddd', rating: 'great' },
+        ],
+      },
+      'v3',
+    );
+    expect(out.ratings).toEqual([
+      { recipeId: 'aaaaaaaaaaaaaaaaaaaaaaaa', rating: 2, scale: 'v3', week: '2026-W45' },
+      { recipeId: 'bbbbbbbbbbbbbbbbbbbbbbbb', rating: 5, scale: 'v3' },
+    ]);
+    expect(out.skipped).toBe(5);
+    expect(JSON.stringify(out)).not.toContain('secret');
+  });
+
+  it('an empty answer is no ratings', () => {
+    expect(projectRatings({}, 'v2')).toEqual({ ratings: [], skipped: 0 });
   });
 });

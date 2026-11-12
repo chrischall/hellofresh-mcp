@@ -157,13 +157,18 @@ Read tools take `view: compact | full` (default `compact`). Money is US cents; p
 | `hf_change_plan_size` | Permanently change the plan's box size. **Resets every one-week size** (`hf_set_week_size`) to the new plan size: the preview lists those weeks and the result says which reverted, to re-apply. Confirm-gated, verified by re-reading the plan. |
 | `hf_change_delivery_schedule` | Permanently change the regular delivery slot and/or frequency (every 1–4 weeks). Confirm-gated, verified. |
 | `hf_list_profiles` | The meal-planner profiles (servings, meals, allowed categories, preferences, premium cap) and where they were loaded from. Local config only. |
-| `hf_suggest_meals` | Ranked picks for a week and a planner profile (e.g. a 4-person kid-friendly week), skipping recent repeats and favouring varied proteins: the top picks plus 2 alternates per slot, with reasons. Read-only. |
+| `hf_suggest_meals` | Ranked picks for a week and a planner profile (e.g. a 4-person kid-friendly week), skipping recent repeats and recipes you rated 2 or lower, favouring your favourites and varied proteins: the top picks plus 2 alternates per slot, with reasons. Read-only. |
 | `hf_weekly_plan` | One read to approve a week: box size needed vs current, suggested picks, estimated total and voucher warning, a one-line summary, and the exact follow-up write calls in order (never a resize of the first box, which keeps its size — see `notes`). Read-only. |
+| `hf_list_favorites` | The recipes you favourited (recipe ids and dates; never your customer id); give a week to name the ones on its menu. The planner favours them. |
+| `hf_list_ratings` | Your own recipe ratings (v2 and/or the 5-star v3 scale); give a week to name them. Parsed defensively — the item shape isn't observed live yet, so unreadable items are skipped and counted. The planner never suggests a recipe you rated 2 or lower. |
+| `hf_favorite_recipe` | Favourite a recipe from a week's menu by index (a protein swap favourites its own recipe). Confirm-gated, verified by re-reading the favourites. Undo with `hf_unfavorite_recipe`. |
+| `hf_unfavorite_recipe` | Remove a recipe on a week's menu from your favourites. Confirm-gated, verified. Undo with `hf_favorite_recipe`. |
 
 ## Limits
 
 - **No cancel.** Cancelling the subscription is deliberately not exposed — do it on the website.
-- **No preferences or extras.** The meal-preference preset, add-ons, favourites, ratings and payments are out of scope.
+- **No preferences or extras.** The meal-preference preset, add-ons and payments are out of scope.
+- **Ratings are read-only.** Rating a recipe isn't supported: HelloFresh's rate call hasn't been verified live (it needs a delivered box).
 - **US only.** Every call uses `country=US` and `locale=en-US`.
 - **Picks before the cutoff only.** HelloFresh refuses changes to a week after its cutoff.
 

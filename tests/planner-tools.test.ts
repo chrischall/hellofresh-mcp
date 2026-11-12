@@ -46,8 +46,13 @@ function defaultRoutes(): Route[] {
     [/\/delivery_dates\/2026-W50$/, W50],
     [/\/delivery_dates\/2026-W4[5-8]$/, (url: URL) => json(delivered(url.pathname.slice(-8)))],
     [/\/my-deliveries\/menu$/, MENU],
+    [/\/cfs\/v2\/favorites\/recipe$/, { total: 0, count: 0, items: [] }],
+    [/\/cfs\/v[23]\/ratings\/recipe$/, { total: 0, count: 0, items: [] }],
   ];
 }
+
+/** Recipe ids on the fixture menu (public menu data). */
+const RECIPE_OF = (index: number): string => MENU.meals.find((m: Any) => m.index === index).recipe.id;
 
 let harness: TestHarness | undefined;
 afterEach(async () => {
@@ -299,6 +304,19 @@ describe('hf_weekly_plan', () => {
       expect(out.notes[0]).toMatch(/keeps US-CBU-3-6-0/);
     });
 
+    it('a first box with no full box size proposes no hf_set_week_size, and says why', async () => {
+      const odd = { ...W49, product: { ...W49.product, handle: 'US-CBU-SPECIAL', specs: { size: 6 } } };
+      const { out } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'couple', avoid_recent_weeks: 0 }, [
+        firstBox,
+        [/\/delivery_dates\/2026-W49$/, odd],
+        [/deliveries$/, { items: [odd] }],
+      ]);
+      expect(out.followUp.map((f: Any) => f.tool)).toEqual(['hf_select_meals']);
+      expect(out.box).toEqual({ current: 'US-CBU-SPECIAL', required: 'US-CBU-SPECIAL', sizeChangeNeeded: false });
+      expect(out.servings).toBe(6);
+      expect(out.notes.join(' ')).toMatch(/2026-W49 is the first box.*cannot be resized.*no full box size.*no size change is proposed/);
+    });
+
     it('a first box already the profile’s size, or already delivered, adds no note', async () => {
       const same = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [firstBox]);
       expect(same.out.notes).toBeUndefined();
@@ -363,6 +381,8 @@ describe('hf_weekly_plan', () => {
     // … unless the plan unskips W50, which then is box 2.
     const w50 = await call('hf_weekly_plan', { week: '2026-W50', profile: 'family', avoid_recent_weeks: 0 }, routes);
     expect(w50.out.estimate.boxNumber).toBe(2);
+    expect(w50.out.boxNumberNote).toMatch(/2026-W50 is skipped, but it was counted as a running box/);
+    expect(w51.out.boxNumberNote).not.toMatch(/counted as a running box/);
     // An explicit box_number needs no note.
     const given = await call('hf_weekly_plan', { week: '2026-W51', profile: 'family', avoid_recent_weeks: 0, box_number: 7 }, routes);
     expect(given.out.estimate.boxNumber).toBe(7);
@@ -432,5 +452,45 @@ describe('hf_weekly_plan', () => {
     const two: LoadedProfiles = { source: 'x', profiles: [{ ...PROFILES.profiles[0]!, avoidRepeatWeeks: 2 }] };
     const { out } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'family' }, [], NOW, () => two);
     expect(out.recentPicks.weeks).toEqual(['2026-W47', '2026-W48']);
+  });
+});
+
+describe('planner: favourites and ratings', () => {
+  it('boosts a favourite recipe and reports what was read', async () => {
+    const { out, urls } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [
+      [/\/cfs\/v2\/favorites\/recipe$/, { total: 1, items: [{ id: 'f1', object_type: 'recipe', object_id: RECIPE_OF(63), customer_uuid: 'secret-uuid' }] }],
+    ]);
+    const all = [...out.picks, ...out.alternates.flatMap((a: Any) => a.options)];
+    const tuna = all.find((c: Any) => c.index === 63);
+    expect(tuna.favorite).toBe(true);
+    expect(tuna.reasons).toContain('one of your favorites');
+    expect(out.personal).toEqual({ favorites: 1, ratings: 0 });
+    expect(JSON.stringify(out)).not.toContain('secret-uuid');
+    expect(urls.map((u) => u.pathname).filter((p) => p.includes('/cfs/')).sort()).toEqual([
+      '/gw/cfs/v2/favorites/recipe',
+      '/gw/cfs/v2/ratings/recipe',
+      '/gw/cfs/v3/ratings/recipe',
+    ]);
+  });
+
+  it('never suggests a recipe rated low; counts unreadable rating items', async () => {
+    const { out } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [
+      [/\/cfs\/v3\/ratings\/recipe$/, { items: [{ object_id: RECIPE_OF(53), rating: 1 }, { unexpected: true }] }],
+    ]);
+    expect(out.picks.map((p: Any) => p.index)).not.toContain(53);
+    const excluded = Object.fromEntries(out.excluded.map((e: Any) => [e.index, e.reason]));
+    expect(excluded[53]).toMatch(/you rated it 1 \(v3 scale\)/);
+    expect(out.personal).toEqual({ favorites: 0, ratings: 1, ratingsSkipped: 1, lowRated: 1 });
+  });
+
+  it('unreadable favourites or ratings do not stop the plan: they are named', async () => {
+    const { out } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [
+      [/\/cfs\/v2\/favorites\/recipe$/, () => json({ error: 'nope' }, 500)],
+      [/\/cfs\/v2\/ratings\/recipe$/, () => json({ error: 'nope' }, 404)],
+    ]);
+    expect(out.picks).toHaveLength(2);
+    expect(out.personal.favorites).toBeUndefined();
+    expect(out.personal.ratings).toBe(0);
+    expect(out.personal.unreadable.map((u: Any) => u.source)).toEqual(['favorites', 'ratings v2']);
   });
 });

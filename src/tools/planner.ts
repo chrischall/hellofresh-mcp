@@ -10,7 +10,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { minifiedResult, toolAnnotations } from '@chrischall/mcp-utils';
 import { projectDelivery, type ProjectedDelivery, type ProjectedMenu } from '../normalize.js';
-import { suggestMeals, summaryText, type Candidate, type Suggestion } from '../planner.js';
+import { LOW_RATING, suggestMeals, summaryText, type Candidate, type Suggestion } from '../planner.js';
 import {
   BUILTIN_PROFILES,
   DEFAULT_PROFILES_FILE,
@@ -37,6 +37,7 @@ import {
   loadAccount,
   nextBoxNumberParam,
   readMenu,
+  readPersonal,
   readPicks,
   weekParam,
   type Account,
@@ -104,6 +105,8 @@ interface SuggestArgs {
 interface Planned {
   menu: ProjectedMenu;
   suggestion: Suggestion;
+  /** What the user's favourites and ratings contributed (best effort). */
+  personal: Record<string, unknown>;
   recent?: { weeks: string[]; avoidedNames: string[]; unreadable?: Array<{ week: string; reason: string }> };
 }
 
@@ -116,9 +119,10 @@ async function plan(
 ): Promise<Planned> {
   const back = args.avoid_recent_weeks ?? profile.avoidRepeatWeeks;
   const weeks = Array.from({ length: back }, (_, i) => shiftWeek(args.week, i - back));
-  const [menu, picks] = await Promise.all([
+  const [menu, picks, mine] = await Promise.all([
     readMenu(client, account, delivery, args.week),
     back > 0 ? readPicks(client, account, weeks) : undefined,
+    readPersonal(client),
   ]);
   const suggestion = suggestMeals(menu, {
     profile,
@@ -126,10 +130,20 @@ async function plan(
     avoidIndexes: args.avoid_indexes,
     avoidNames: picks?.recipeNames,
     maxPremiumPerServingCents: args.max_premium_per_serving_cents,
+    favoriteRecipeIds: mine.favoriteRecipeIds,
+    ratings: mine.ratings,
   });
+  const lowRated = mine.ratings.filter((r) => r.rating <= LOW_RATING).length;
   return {
     menu,
     suggestion,
+    personal: {
+      ...(mine.favoriteRecipeIds ? { favorites: mine.favoriteRecipeIds.length } : {}),
+      ratings: mine.ratings.length,
+      ...(mine.ratingsSkipped > 0 ? { ratingsSkipped: mine.ratingsSkipped } : {}),
+      ...(lowRated > 0 ? { lowRated } : {}),
+      ...(mine.unreadable.length > 0 ? { unreadable: mine.unreadable } : {}),
+    },
     ...(picks
       ? {
           recent: {
@@ -149,6 +163,7 @@ function compactCandidate(c: Candidate) {
     category: c.category,
     protein: c.protein,
     ...(c.baseIndex !== undefined ? { baseIndex: c.baseIndex } : {}),
+    ...(c.favorite ? { favorite: true } : {}),
     kidFriendly: c.kidFriendly,
     totalMinutes: c.totalMinutes,
     ...(c.premiumPerServingCents > 0 ? { premiumPerServingCents: c.premiumPerServingCents, premiumBoxCents: c.premiumBoxCents } : {}),
@@ -236,8 +251,9 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
         'Suggest the dinners to pick for a HelloFresh delivery week for a planner profile (hf_list_profiles): ranks ' +
         'every dish and protein swap on the week’s menu in the profile’s allowed categories by its preferences ' +
         '(kid friendly, quick, adventurous) and premium cap, skips recipes picked in recent weeks, prefers varied ' +
-        'proteins (e.g. one shrimp + one fish), and returns the top picks plus 2 alternates per slot, each with its ' +
-        'reasons. Read-only: pick with hf_select_meals.',
+        'proteins (e.g. one shrimp + one fish), favours the user’s favourite recipes, never suggests one they rated 2 ' +
+        'or lower, and returns the top picks plus 2 alternates per slot, each with its reasons. Read-only: pick with ' +
+        'hf_select_meals.',
       annotations: readOnly('HelloFresh: suggest meals'),
       _meta: foodMeta('other', { aliases: ['what should we have', 'hellofresh suggestions', 'seafood dinners', 'pick dinners'] }),
       inputSchema: z.object(suggestInput),
@@ -246,13 +262,14 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
       const profile = profileFor(args.profile);
       const account = await loadAccount(client);
       const delivery = projectDelivery(await client.getDelivery(account.subscriptionId, args.week));
-      const { suggestion, recent } = await plan(client, account, delivery, profile, args);
+      const { suggestion, recent, personal } = await plan(client, account, delivery, profile, args);
       return minifiedResult({
         week: args.week,
         profile: profile.name,
         servings: suggestion.people,
         box: { current: delivery.sku, required: profileSku(profile, suggestion.people) },
         ...suggestionFields(suggestion),
+        personal,
         ...(recent ? { recentPicks: recent } : {}),
         next: `hf_weekly_plan {week: "${args.week}", profile: "${profile.name}"} prices it and lists the writes; hf_select_meals picks.`,
       });
@@ -292,19 +309,30 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
       const upcoming = (list.items ?? []).map(projectDelivery);
       // The first box cannot be resized (a HelloFresh rule): plan for the box as it is, and say so.
       const wanted = profileSku(profile, args.people ?? profile.people);
-      const firstBoxFixed = isUnresizableFirstBox(account.subscription, week) && !!delivery.sku && !!delivery.servings && !!delivery.meals;
+      const firstBox = isUnresizableFirstBox(account.subscription, week);
+      const firstBoxKnown = !!delivery.sku && !!delivery.servings && !!delivery.meals;
+      const firstBoxFixed = firstBox && firstBoxKnown;
+      /** The first box with no full size read: it cannot be resized, and its size cannot be compared. */
+      const firstBoxUnknown = firstBox && !firstBoxKnown;
       const firstBoxDiffers = firstBoxFixed && delivery.sku !== wanted;
       const planProfile = firstBoxDiffers ? { ...profile, meals: delivery.meals! } : profile;
-      const planArgs = firstBoxDiffers ? { ...args, people: delivery.servings as SuggestArgs['people'] } : args;
-      const { menu, suggestion, recent } = await plan(client, account, delivery, planProfile, planArgs);
+      const planArgs = firstBoxDiffers || firstBoxUnknown ? { ...args, people: delivery.servings as SuggestArgs['people'] } : args;
+      const { menu, suggestion, recent, personal } = await plan(client, account, delivery, planProfile, planArgs);
       const { picks, people } = suggestion;
-      const sku = firstBoxDiffers ? delivery.sku! : profileSku(profile, people);
+      // A first box keeps its size; the menu read above needs `delivery.sku`, so it is set here.
+      const sku = firstBoxDiffers || firstBoxUnknown ? delivery.sku! : profileSku(profile, people);
       const notes = firstBoxDiffers
         ? [
             `${week} is the first box of this subscription, which HelloFresh says cannot be resized: it keeps ` +
               `${delivery.sku} (the ${profile.name} profile would want ${wanted}), so the picks and estimate are for it as it is.`,
           ]
-        : [];
+        : firstBoxUnknown
+          ? [
+              `${week} is the first box of this subscription, which HelloFresh says cannot be resized, and HelloFresh ` +
+                `returned no full box size for it (box ${delivery.sku} for ${delivery.servings} people, no meal count): no size ` +
+                `change is proposed (hf_set_week_size would refuse it), and the picks follow the ${profile.name} profile’s meal count for the box’s ${delivery.servings} servings.`,
+            ]
+          : [];
 
       const sizeChangeNeeded = delivery.sku !== sku;
       const skipped = delivery.status === 'skipped';
@@ -365,12 +393,20 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
         ...(estimate
           ? { estimate: { ...compactEstimate(estimate), ...(estimate.voucher ? { voucher: estimate.voucher.code } : {}), priceFrom: price!.priceFrom } }
           : { estimateWarning: `HelloFresh shows no price for ${sku} on this account, so the box total is not estimated.` }),
-        ...(estimate && args.box_number === undefined ? { boxNumberNote: numbering.note } : {}),
+        ...(estimate && args.box_number === undefined
+          ? {
+              boxNumberNote:
+                skipped && boxNumber !== undefined
+                  ? `${numbering.note} ${week} is skipped, but it was counted as a running box (box ${boxNumber}) because the plan unskips it; later weeks shift up by one once it is unskipped.`
+                  : numbering.note,
+            }
+          : {}),
         summary: summaryText({ profile, people, deliveryDate: delivery.deliveryDate, picks, estimate }),
         ...(locked ? { locked } : {}),
         ...(alreadyPicked ? { note: 'The suggested meals are already picked for this week; nothing to change.' } : {}),
         ...(notes.length > 0 ? { notes } : {}),
         followUp,
+        personal,
         ...(followUp.length > 0
           ? {
               followUpNote:

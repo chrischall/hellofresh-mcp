@@ -38,6 +38,8 @@ import type {
   ProductOptions,
   RawDelivery,
   RawDeliveryMenu,
+  RawFavorites,
+  RawRatings,
   RawSubscription,
 } from './types.js';
 
@@ -62,7 +64,10 @@ export interface HelloFreshClientOptions {
   timeoutMs?: number;
 }
 
-type Method = 'GET' | 'PUT' | 'PATCH' | 'POST';
+type Method = 'GET' | 'PUT' | 'PATCH' | 'POST' | 'DELETE';
+
+/** The ratings scales (`v3` is the 5-star one). */
+export type RatingScale = 'v2' | 'v3';
 
 interface RequestOptions {
   /** Query params; `country`/`locale` are added unless `locale: false`. */
@@ -189,6 +194,17 @@ export class HelloFreshClient {
     });
   }
 
+  /** The customer's favourite recipes (items carry the customer uuid: project before returning). */
+  listFavorites(): Promise<RawFavorites> {
+    return this.request('GET', '/cfs/v2/favorites/recipe');
+  }
+
+  /** The customer's recipe ratings on one scale. The item shape is not yet observed: parse defensively. */
+  listRatings(scale: RatingScale): Promise<RawRatings> {
+    // The documented query uses a lowercase country here.
+    return this.request('GET', `/cfs/${scale}/ratings/recipe`, { locale: false, query: { country: 'us', locale: LOCALE } });
+  }
+
   // ---- writes (docs/HELLOFRESH-API.md "Writes" 1–5, 3 split into 3a size / 3b day) -------------------------
   // Each write is built by an exported pure builder (below), so the confirm
   // preview of a write and the request actually sent are the same object.
@@ -221,6 +237,16 @@ export class HelloFreshClient {
   /** Write 5: permanent delivery slot + frequency (send BOTH). 200, empty body. */
   async changePlanDeliveryDetails(customerPlanId: string, details: PlanDeliveryDetails): Promise<void> {
     await this.send(planDeliveryDetailsRequest(customerPlanId, details));
+  }
+
+  /** Favourite a recipe (`recipe.id`). 204, no body. */
+  async addFavorite(recipeId: string, week?: string): Promise<void> {
+    await this.send(addFavoriteRequest(recipeId, week), { discardBody: true });
+  }
+
+  /** Un-favourite a recipe (`recipe.id`). 204, no body. */
+  async removeFavorite(recipeId: string): Promise<void> {
+    await this.send(removeFavoriteRequest(recipeId), { discardBody: true });
   }
 
   private send<T>(w: WriteRequest, opts: Pick<RequestOptions, 'discardBody'> = {}): Promise<T> {
@@ -389,5 +415,25 @@ export function planDeliveryDetailsRequest(customerPlanId: string, details: Plan
     route: '/api/plans/{planId}/changePlanDeliveryDetails',
     query: { country: COUNTRY },
     body: { deliveryOption: details.deliveryOption, deliveryInterval: details.deliveryInterval },
+  };
+}
+
+export function addFavoriteRequest(recipeId: string, week?: string): WriteRequest {
+  return {
+    method: 'PUT',
+    path: apiPath`/cfs/v2/favorites/recipe/${recipeId}`,
+    route: `/cfs/v2/favorites/recipe/${recipeId}`,
+    query: { ...LOCALE_QUERY, ...(week ? { weekId: week } : {}) },
+    body: undefined,
+  };
+}
+
+export function removeFavoriteRequest(recipeId: string): WriteRequest {
+  return {
+    method: 'DELETE',
+    path: apiPath`/cfs/v2/favorites/recipe/${recipeId}`,
+    route: `/cfs/v2/favorites/recipe/${recipeId}`,
+    query: { ...LOCALE_QUERY },
+    body: undefined,
   };
 }

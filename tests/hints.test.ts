@@ -28,6 +28,10 @@ const EXPECTED: Record<string, string> = {
   hf_list_profiles: 'lookup',
   hf_suggest_meals: 'other',
   hf_weekly_plan: 'other',
+  hf_list_favorites: 'lookup',
+  hf_list_ratings: 'lookup',
+  hf_favorite_recipe: 'change',
+  hf_unfavorite_recipe: 'change',
 };
 
 type Served = ListedTool & { inputSchema: { properties?: Record<string, { enum?: string[] }> } };

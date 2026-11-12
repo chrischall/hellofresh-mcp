@@ -57,7 +57,7 @@ import {
 } from './shared.js';
 import type { ToolDeps } from './index.js';
 
-type GateFields = Omit<ConfirmWriteOptions, 'tool' | 'confirmToken' | 'args'>;
+export type GateFields = Omit<ConfirmWriteOptions, 'tool' | 'confirmToken' | 'args'>;
 
 interface GatedWrite<Shape extends z.ZodRawShape, State> {
   name: string;
@@ -70,7 +70,7 @@ interface GatedWrite<Shape extends z.ZodRawShape, State> {
   execute(state: State): Promise<CallToolResult>;
 }
 
-function registerGated<Shape extends z.ZodRawShape, State>(server: McpServer, def: GatedWrite<Shape, State>): void {
+export function registerGated<Shape extends z.ZodRawShape, State>(server: McpServer, def: GatedWrite<Shape, State>): void {
   server.registerTool(
     def.name,
     {
@@ -90,16 +90,16 @@ function registerGated<Shape extends z.ZodRawShape, State>(server: McpServer, de
 }
 
 /** A write as `confirmWrite` previews and binds it: the path as sent on www.hellofresh.com. */
-const shown = (w: WriteRequest) => ({ method: w.method, path: `/gw${w.path}`, query: w.query, body: w.body });
+export const shown = (w: WriteRequest) => ({ method: w.method, path: `/gw${w.path}`, query: w.query, body: w.body });
 
-const CHANGE = (aliases: string[]) => foodMeta('change', { aliases });
+export const CHANGE = (aliases: string[]) => foodMeta('change', { aliases });
 
 /**
  * Send `send`, then re-read with `verify`. A send whose outcome is unknown
  * answers `status: 'unknown'`; a re-read that fails answers `unverified` with
  * the reason.
  */
-async function sendAndVerify<After>(opts: {
+export async function sendAndVerify<After>(opts: {
   send: () => Promise<unknown>;
   verify: () => Promise<{ ok: boolean; after: After; extra?: Record<string, unknown> }>;
   before: unknown;
