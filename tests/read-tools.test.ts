@@ -4,6 +4,7 @@ import { createTestHarness, parseToolResult, type TestHarness } from '@chrischal
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { HelloFreshClient, type ClientSession } from '../src/client.js';
 import { registerReadTools } from '../src/tools/reads.js';
+import { boxNumbering } from '../src/tools/shared.js';
 import type { ToolDeps } from '../src/tools/index.js';
 import { offlineDeps } from './helpers.js';
 
@@ -223,6 +224,8 @@ describe('hf_list_deliveries', () => {
     expect(out.deliveries[2].estimate).toBeUndefined();
     expect(out.estimateNote).toMatch(/premium/);
     expect(out.estimateNote).toMatch(/next_box_number/);
+    // The fixture subscription does not say whether its first box was delivered.
+    expect(out.estimateNote).toMatch(/does not say whether the first box was delivered.*ASSUMES.*box 2/);
   });
 
   it('next_box_number moves the voucher rule; a box past the voucher is flagged', async () => {
@@ -238,6 +241,47 @@ describe('hf_list_deliveries', () => {
     const two = { items: [W49, { ...W49, id: '2026-W51', deliveryDate: '2026-12-14T00:00:00-05:00' }] };
     const out = parseToolResult<Any>((await call('hf_list_deliveries', {}, [[/deliveries$/, two]])).result);
     expect(out.deliveries.map((d: Any) => d.estimate.boxNumber)).toEqual([2, 3]);
+  });
+
+  it('first box not yet delivered: the earliest running week is box 1, skipped weeks take no number', async () => {
+    const W51 = { ...W49, id: '2026-W51', deliveryDate: '2026-12-14T00:00:00-05:00' };
+    const W52 = { ...W49, id: '2026-W52', deliveryDate: '2026-12-21T00:00:00-05:00' };
+    const fresh = { ...SUB, firstDeliveryWeek: '2026-W49', firstBoxDelivered: false };
+    const routes: Route[] = [
+      [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [fresh] }],
+      [/deliveries$/, { items: [W52, W50, W51, W49] }],
+    ];
+    const out = parseToolResult<Any>((await call('hf_list_deliveries', {}, routes)).result);
+    expect(out.deliveries.map((d: Any) => [d.week, d.estimate?.boxNumber])).toEqual([
+      ['2026-W49', 1],
+      ['2026-W50', undefined],
+      ['2026-W51', 2],
+      ['2026-W52', 3],
+    ]);
+    // Box 1: 65 % of product + fee + shipping.
+    expect(out.deliveries[0].estimate).toMatchObject({ discountCents: 10431 });
+    expect(out.estimateNote).toMatch(/first box is not delivered yet.*box 1/);
+    expect(out.estimateNote).not.toMatch(/assum/i);
+    // hf_get_delivery numbers the same way.
+    const one = parseToolResult<Any>((await call('hf_get_delivery', { week: '2026-W51' }, [
+      ...routes,
+      [/\/delivery_dates\/2026-W51$/, W51],
+    ])).result);
+    expect(one.estimate.boxNumber).toBe(2);
+    expect(one.boxNumberNote).toMatch(/first box is not delivered yet/);
+    // An explicit next_box_number still wins.
+    const forced = parseToolResult<Any>((await call('hf_list_deliveries', { next_box_number: 5 }, routes)).result);
+    expect(forced.deliveries[0].estimate.boxNumber).toBe(5);
+    expect(forced.estimateNote).toMatch(/next_box_number 5/);
+  });
+
+  it('first box already delivered: box 2 is an explicit assumption', async () => {
+    const established = { ...SUB, firstDeliveryWeek: '2026-W40', firstBoxDelivered: true };
+    const out = parseToolResult<Any>(
+      (await call('hf_list_deliveries', {}, [[/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [established] }]])).result,
+    );
+    expect(out.deliveries[1].estimate.boxNumber).toBe(2);
+    expect(out.estimateNote).toMatch(/first box was delivered in 2026-W40.*not how many.*ASSUMES.*box 2.*next_box_number/);
   });
 
   it('full: the whole allowlisted projection and the whole estimate', async () => {
@@ -576,5 +620,18 @@ describe('hf_recent_picks', () => {
   it('a failed subscription read fails the call', async () => {
     const { result } = await call('hf_recent_picks', {}, [[/subscriptions$/, () => json({}, 500)]]);
     expect(result.isError).toBe(true);
+  });
+});
+
+describe('boxNumbering', () => {
+  it('names the first delivery week only when HelloFresh gives it', () => {
+    expect(boxNumbering({ firstBoxDelivered: false }, undefined)).toEqual({
+      next: 1,
+      note: expect.stringMatching(/first box is not delivered yet, so the earliest running delivery is box 1/),
+    });
+    expect(boxNumbering({ firstBoxDelivered: true }, undefined)).toEqual({
+      next: 2,
+      note: expect.stringMatching(/^HelloFresh says the first box was delivered but not how many boxes since, so this ASSUMES/),
+    });
   });
 });

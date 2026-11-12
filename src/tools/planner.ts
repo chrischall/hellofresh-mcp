@@ -27,7 +27,7 @@ import { shiftWeek } from '../weeks.js';
 import type { HelloFreshClient } from '../client.js';
 import { foodMeta } from './hints.js';
 import {
-  DEFAULT_NEXT_BOX_NUMBER,
+  boxNumbering,
   boxNumbers,
   compactEstimate,
   compactSelection,
@@ -297,11 +297,12 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
       const locked = lockedReason(delivery, week, now());
 
       // Box number as if the week runs (an unskip makes it count).
+      const numbering = boxNumbering(account.subscription, args.next_box_number);
       const boxNumber =
         args.box_number ??
         boxNumbers(
           upcoming.map((d) => (d.week === week ? { ...d, status: 'running' as const } : d)),
-          args.next_box_number ?? DEFAULT_NEXT_BOX_NUMBER,
+          numbering.next,
         ).get(week);
       const price = priceFor(sku, delivery, upcoming, account);
       const estimate = price
@@ -350,6 +351,7 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
         ...(estimate
           ? { estimate: { ...compactEstimate(estimate), ...(estimate.voucher ? { voucher: estimate.voucher.code } : {}), priceFrom: price!.priceFrom } }
           : { estimateWarning: `HelloFresh shows no price for ${sku} on this account, so the box total is not estimated.` }),
+        ...(estimate && args.box_number === undefined ? { boxNumberNote: numbering.note } : {}),
         summary: summaryText({ profile, people, deliveryDate: delivery.deliveryDate, picks, estimate }),
         ...(locked ? { locked } : {}),
         ...(alreadyPicked ? { note: 'The suggested meals are already picked for this week; nothing to change.' } : {}),

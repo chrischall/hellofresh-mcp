@@ -159,8 +159,9 @@ describe('hf_suggest_meals', () => {
       box: { current: 'US-CBU-2-6-0', required: 'US-CBU-2-6-0' },
       maxPremiumPerServingCents: 500,
     });
-    expect(out.picks.map((p: Any) => p.index)).toEqual([53, 558]);
-    expect(out.picks[1]).toMatchObject({ baseIndex: 67, category: 'Seafood', protein: 'fish', name: 'Pesto Salmon Linguine with Spinach' });
+    expect(out.picks.map((p: Any) => p.index)).toEqual([53, 30]);
+    expect(out.picks[1]).toMatchObject({ index: 30, category: 'Seafood', protein: 'fish', name: 'Air-Fried Gochujang Salmon ' });
+    expect(out.picks[1].baseIndex).toBeUndefined();
     expect(out.alternates).toHaveLength(2);
     expect(out.alternates[0].options).toHaveLength(2);
     // The recent weeks' picks (67 and 71) are not suggested again.
@@ -204,6 +205,14 @@ describe('hf_suggest_meals', () => {
     expect(premium.premiumBoxCents).toBe(premium.premiumPerServingCents * 2);
   });
 
+  it('a protein swap that fits where its course does not carries its base course index', async () => {
+    const poultry: LoadedProfiles = { source: 'x', profiles: [{ ...PROFILES.profiles[0]!, name: 'poultry', categories: ['Poultry'] }] };
+    const { out } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'poultry', avoid_recent_weeks: 0 }, [], NOW, () => poultry);
+    const all = [...out.picks, ...out.alternates.flatMap((a: Any) => a.options)];
+    expect(all.find((c: Any) => c.index === 565)).toMatchObject({ baseIndex: 67, category: 'Poultry' });
+    expect(all.find((c: Any) => c.index === 1)?.baseIndex).toBeUndefined();
+  });
+
   it('a menu with no eligible seafood answers a warning and no picks', async () => {
     const { out } = await call('hf_suggest_meals', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [
       [/\/menu$/, { ...MENU, meals: MENU.meals.filter((m: Any) => m.recipe.category !== 'Seafood'), modularity: [] }],
@@ -228,7 +237,7 @@ describe('hf_weekly_plan', () => {
     expect(out.box).toEqual({ current: 'US-CBU-2-6-0', required: 'US-CBU-2-6-0', sizeChangeNeeded: false });
     expect(out.delivery).toEqual({ deliveryDate: '2026-11-30', cutoffDate: '2026-11-25T23:59:59-05:00', status: 'running' });
     expect(out.currentPicks.map((p: Any) => p.index)).toEqual([67, 71]);
-    expect(out.picks.map((p: Any) => p.index)).toEqual([53, 558]);
+    expect(out.picks.map((p: Any) => p.index)).toEqual([53, 30]);
     // 14748 + 1299 fee; box 2 = 15 % of the product price (2212).
     expect(out.estimate).toEqual({
       boxNumber: 2,
@@ -239,11 +248,11 @@ describe('hf_weekly_plan', () => {
       priceFrom: 'this week',
     });
     expect(out.summary).toBe(
-      'Family week (6 servings) — delivering Mon 11/30: Garlicky Shrimp Couscous Bowls + Pesto Salmon Linguine with Spinach. ' +
+      'Family week (6 servings) — delivering Mon 11/30: Garlicky Shrimp Couscous Bowls + Air-Fried Gochujang Salmon. ' +
         'Est. box total $138.35 (−$22.12 EXAMPLE65).',
     );
     expect(out.followUp).toEqual([
-      { tool: 'hf_select_meals', arguments: { week: '2026-W49', meals: [53, 558] }, why: 'Pick the suggested meals.' },
+      { tool: 'hf_select_meals', arguments: { week: '2026-W49', meals: [53, 30] }, why: 'Pick the suggested meals.' },
     ]);
     expect(out.followUpNote).toMatch(/confirm-gated/);
     expect(out.locked).toBeUndefined();
@@ -302,11 +311,33 @@ describe('hf_weekly_plan', () => {
     expect(out.estimate.voucher).toBeUndefined();
   });
 
+  it('first box not yet delivered: numbered from box 1 over running weeks, a planned skipped week counting as running', async () => {
+    const W51 = { ...W49, id: '2026-W51', deliveryDate: '2026-12-14T00:00:00-05:00' };
+    const routes: Route[] = [
+      [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W49', firstBoxDelivered: false }] }],
+      [/deliveries$/, { items: [W49, W50, W51] }],
+      [/\/delivery_dates\/2026-W51$/, W51],
+    ];
+    const w49 = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, routes);
+    expect(w49.out.estimate).toMatchObject({ boxNumber: 1, discountCents: Math.round((14748 + 1299) * 0.65) });
+    expect(w49.out.boxNumberNote).toMatch(/first box is not delivered yet/);
+    // W50 is skipped, so W51 is box 2 …
+    const w51 = await call('hf_weekly_plan', { week: '2026-W51', profile: 'family', avoid_recent_weeks: 0 }, routes);
+    expect(w51.out.estimate.boxNumber).toBe(2);
+    // … unless the plan unskips W50, which then is box 2.
+    const w50 = await call('hf_weekly_plan', { week: '2026-W50', profile: 'family', avoid_recent_weeks: 0 }, routes);
+    expect(w50.out.estimate.boxNumber).toBe(2);
+    // An explicit box_number needs no note.
+    const given = await call('hf_weekly_plan', { week: '2026-W51', profile: 'family', avoid_recent_weeks: 0, box_number: 7 }, routes);
+    expect(given.out.estimate.boxNumber).toBe(7);
+    expect(given.out.boxNumberNote).toBeUndefined();
+  });
+
   it('the suggested meals already picked → nothing to do', async () => {
     const { out } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [
-      [/\/menu$/, menuSelecting(53, 558)],
+      [/\/menu$/, menuSelecting(53, 30)],
     ]);
-    expect(out.picks.map((p: Any) => p.index)).toEqual([53, 558]);
+    expect(out.picks.map((p: Any) => p.index)).toEqual([53, 30]);
     expect(out.followUp).toEqual([]);
     expect(out.followUpNote).toBeUndefined();
     expect(out.note).toMatch(/already picked/);

@@ -30,8 +30,13 @@ export const weekParam = z
   .regex(WEEK_PATTERN, 'an ISO week like 2026-W49')
   .describe('The delivery week as an ISO week, e.g. 2026-W49 (from hf_list_deliveries).');
 
-/** The default box number of the next running delivery: an established subscription is past its first box. */
-export const DEFAULT_NEXT_BOX_NUMBER = 2;
+/**
+ * The ASSUMED box number of the next running delivery when HelloFresh says the
+ * first box was delivered (or does not say) but not how many boxes since:
+ * an established subscription is past its first box. Never used when the
+ * first box is not yet delivered — then the next running box is box 1.
+ */
+export const ASSUMED_NEXT_BOX_NUMBER = 2;
 
 export const nextBoxNumberParam = z
   .number()
@@ -41,7 +46,8 @@ export const nextBoxNumberParam = z
   .optional()
   .describe(
     'Which box this account’s NEXT running delivery will be, counting every box ever delivered (1 = the first ' +
-      `box). The voucher’s discount depends on it. Default ${DEFAULT_NEXT_BOX_NUMBER} (an established subscription past its first box).`,
+      'box). The voucher’s discount depends on it. Default: 1 when HelloFresh says the first box is not delivered ' +
+      `yet; otherwise an assumed ${ASSUMED_NEXT_BOX_NUMBER} (HelloFresh does not say how many boxes were delivered).`,
   );
 
 // ---- the account ------------------------------------------------------------------
@@ -134,13 +140,39 @@ export async function readPicks(
 
 // ---- estimates --------------------------------------------------------------------
 
-/** Box number per running week (in week order), starting at `next`. */
+/** Box number per running week (in week order), starting at `next`; skipped weeks take no number. */
 export function boxNumbers(deliveries: readonly ProjectedDelivery[], next: number): Map<string, number> {
   const numbers = new Map<string, number>();
   for (const d of [...deliveries].sort(byWeek)) {
     if (d.status === 'running' && d.week) numbers.set(d.week, next + numbers.size);
   }
   return numbers;
+}
+
+/** Where the box numbering starts, and the note saying how that was decided. */
+export function boxNumbering(
+  subscription: Pick<RawSubscription, 'firstBoxDelivered' | 'firstDeliveryWeek'>,
+  nextBoxNumber: number | undefined,
+): { next: number; note: string } {
+  const counting = 'each later running week counts up by one (skipped weeks take no box number)';
+  if (nextBoxNumber !== undefined) {
+    return { next: nextBoxNumber, note: `Box numbers start at next_box_number ${nextBoxNumber} for the next running delivery; ${counting}.` };
+  }
+  if (subscription.firstBoxDelivered === false) {
+    const first = subscription.firstDeliveryWeek ? ` (first delivery week ${subscription.firstDeliveryWeek})` : '';
+    return {
+      next: 1,
+      note: `HelloFresh says this account’s first box is not delivered yet${first}, so the earliest running delivery is box 1 and ${counting}.`,
+    };
+  }
+  const known =
+    subscription.firstBoxDelivered === true
+      ? `HelloFresh says the first box was delivered${subscription.firstDeliveryWeek ? ` in ${subscription.firstDeliveryWeek}` : ''} but not how many boxes since`
+      : 'HelloFresh does not say whether the first box was delivered';
+  return {
+    next: ASSUMED_NEXT_BOX_NUMBER,
+    note: `${known}, so this ASSUMES the next running delivery is box ${ASSUMED_NEXT_BOX_NUMBER} and ${counting}. Pass next_box_number to correct it.`,
+  };
 }
 
 export const byWeek = (a: { week?: string }, b: { week?: string }) => (a.week ?? '').localeCompare(b.week ?? '');

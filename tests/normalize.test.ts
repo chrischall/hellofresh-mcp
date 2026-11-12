@@ -53,6 +53,13 @@ describe('parseSku / parseDurationMinutes / seafoodKindOf', () => {
 });
 
 describe('projectSubscription', () => {
+  it('keeps the first-box fields the box numbering reads', () => {
+    expect(projectSubscription({ ...sub, firstDeliveryWeek: '2026-W49', firstBoxDelivered: false })).toMatchObject({
+      firstDeliveryWeek: '2026-W49',
+      firstBoxDelivered: false,
+    });
+  });
+
   it('projects to the allowlist (no name, email, address, payment, customer ids)', () => {
     const p = projectSubscription(sub);
     expect(p).toEqual({

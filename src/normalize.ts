@@ -63,6 +63,8 @@ export interface ProjectedSubscription {
   nextDeliveryWeek?: string;
   nextCutoffDate?: string;
   nextModifiableDeliveryWeek?: string;
+  firstDeliveryWeek?: string;
+  firstBoxDelivered?: boolean;
   couponCode?: string | null;
   isActive?: boolean;
   pausedAt: string | null;
@@ -86,6 +88,8 @@ export function projectSubscription(s: RawSubscription): ProjectedSubscription {
     nextDeliveryWeek: s.nextDeliveryWeek,
     nextCutoffDate: s.nextCutoffDate,
     nextModifiableDeliveryWeek: s.nextModifiableDeliveryWeek,
+    firstDeliveryWeek: s.firstDeliveryWeek,
+    firstBoxDelivered: s.firstBoxDelivered,
     couponCode: s.couponCode,
     isActive: s.isActive,
     pausedAt: s.pausedAt ?? null,

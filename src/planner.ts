@@ -2,7 +2,7 @@
 //
 // Everything household-specific comes from a planner PROFILE (src/profiles.ts):
 // how many people and meals, which recipe categories are allowed, and which
-// traits to favour. The scoring, per dish (base course or protein swap):
+// traits to favour. The scoring, per dish (one per recipe: see dishes()):
 //   - kidFriendly profiles: family-friendly recipes boosted, spicy marked down;
 //   - maxMinutes: recipes within it boosted strongly, slower ones marked down
 //     (without maxMinutes a mild preference for ≤ 30 min);
@@ -11,10 +11,13 @@
 //   - premiums over the profile's per-serving cap are excluded; under it they
 //     cost points in proportion to the upcharge × servings.
 // Picks then favour protein diversity (distinct categories, and within
-// Seafood distinct kinds — e.g. one shrimp + one fish), never repeat a recently
-// picked recipe, and never pair a course with its own protein swap.
+// Seafood distinct kinds — e.g. one shrimp + one fish) and never repeat a
+// recently picked recipe. Each recipe is ONE dish: a base course in the allowed
+// categories stands for itself (never an upgrade swap such as "2x Tilapia");
+// only a base outside them is replaced by its cheapest allowed protein swap.
+// Picks and alternates are always distinct recipes.
 
-import type { ProjectedMeal, ProjectedMenu, SeafoodKind } from './normalize.js';
+import type { ProjectedMeal, ProjectedMenu, ProjectedVariant, SeafoodKind } from './normalize.js';
 import type { Profile } from './profiles.js';
 import { profileLabel } from './profiles.js';
 
@@ -87,33 +90,52 @@ const courseOf = (c: Candidate) => c.baseIndex ?? c.index;
 
 type Dish = Pick<Candidate, 'index' | 'baseIndex' | 'name' | 'category' | 'seafoodKind' | 'premiumPerServingCents' | 'selected'>;
 
-/** Every dish on the menu: base courses and protein swaps (which share their course's recipe traits). */
-function dishes(menu: ProjectedMenu): Array<{ dish: Dish; course: ProjectedMeal }> {
-  return menu.meals.flatMap((course) => [
-    {
-      dish: {
-        index: course.index,
-        name: course.name,
-        category: course.category,
-        seafoodKind: course.seafoodKind,
-        premiumPerServingCents: course.premiumPerServingCents,
-        selected: course.selectedQuantity > 0,
+/** A double-protein swap ("2x Shrimp", "… with 2x Tilapia"): an upgrade, not a swap. */
+const isDouble = (v: Pick<ProjectedVariant, 'title' | 'name'>) => /\b2x\b/i.test(`${v.title ?? ''} ${v.name ?? ''}`);
+
+/**
+ * One dish per recipe (a base course and its protein swaps are ONE recipe):
+ * the base course itself when it is in the allowed categories (or there is no
+ * allowlist) — never an upgrade swap of it; otherwise the cheapest swap that
+ * IS allowed (e.g. a shrimp swap of a chicken dish), a double-protein swap
+ * only when no single-protein swap qualifies; none when nothing qualifies.
+ */
+function dishes(menu: ProjectedMenu, allowed: (category: string | null) => boolean): Array<{ dish: Dish; course: ProjectedMeal }> {
+  return menu.meals.flatMap((course) => {
+    if (allowed(course.category)) {
+      return [
+        {
+          dish: {
+            index: course.index,
+            name: course.name,
+            category: course.category,
+            seafoodKind: course.seafoodKind,
+            premiumPerServingCents: course.premiumPerServingCents,
+            selected: course.selectedQuantity > 0,
+          },
+          course,
+        },
+      ];
+    }
+    const [swap] = course.variants
+      .filter((v) => allowed(v.category))
+      .sort((a, b) => Number(isDouble(a)) - Number(isDouble(b)) || a.premiumPerServingCents - b.premiumPerServingCents || a.index - b.index);
+    if (!swap) return [];
+    return [
+      {
+        dish: {
+          index: swap.index,
+          baseIndex: course.index,
+          name: swap.name ?? swap.title,
+          category: swap.category,
+          seafoodKind: swap.seafoodKind,
+          premiumPerServingCents: swap.premiumPerServingCents,
+          selected: swap.selectedQuantity > 0,
+        },
+        course,
       },
-      course,
-    },
-    ...course.variants.map((v) => ({
-      dish: {
-        index: v.index,
-        baseIndex: course.index,
-        name: v.name ?? v.title,
-        category: v.category,
-        seafoodKind: v.seafoodKind,
-        premiumPerServingCents: v.premiumPerServingCents,
-        selected: v.selectedQuantity > 0,
-      },
-      course,
-    })),
-  ]);
+    ];
+  });
 }
 
 const proteinOf = (d: Pick<Dish, 'category' | 'seafoodKind'>) => d.seafoodKind ?? d.category ?? 'unknown';
@@ -184,10 +206,11 @@ export function suggestMeals(menu: ProjectedMenu, opts: SuggestOptions): Suggest
   const avoidIndexes = new Set(opts.avoidIndexes ?? []);
   const avoidNames = new Set((opts.avoidNames ?? []).map(normalName));
 
+  const allowed = (category: string | null) => !categories || categories.has((category ?? '').toLowerCase());
+
   const excluded: Exclusion[] = [];
   const eligible: Candidate[] = [];
-  for (const { dish, course } of dishes(menu)) {
-    if (categories && !categories.has((dish.category ?? '').toLowerCase())) continue;
+  for (const { dish, course } of dishes(menu, allowed)) {
     const reason = avoidIndexes.has(dish.index)
       ? 'avoided by request'
       : dish.name && avoidNames.has(normalName(dish.name))
@@ -201,14 +224,14 @@ export function suggestMeals(menu: ProjectedMenu, opts: SuggestOptions): Suggest
   const ranked = eligible.sort((a, b) => b.score - a.score || a.index - b.index);
 
   const picks = choose(ranked, profile.meals);
-  const used = new Set(picks.map((p) => p.index));
+  // Every pick and alternate is a distinct RECIPE (a swap shares its base course's recipe).
+  const usedRecipes = new Set(picks.map(courseOf));
   const alternates = picks.map((pick, slot) => {
-    const otherCourses = new Set(picks.filter((p) => p !== pick).map(courseOf));
     const options = ranked
-      .filter((c) => !used.has(c.index) && !otherCourses.has(courseOf(c)))
+      .filter((c) => !usedRecipes.has(courseOf(c)))
       .sort((a, b) => Number(b.protein === pick.protein) - Number(a.protein === pick.protein))
       .slice(0, 2);
-    for (const o of options) used.add(o.index);
+    for (const o of options) usedRecipes.add(courseOf(o));
     return { slot: slot + 1, for: pick.name, options };
   });
 
@@ -259,7 +282,7 @@ export interface SummaryInput {
  * `Family week (4 servings) — delivering Mon 11/30: <A> + <B>. Est. box total $X (−$Y CODE).`
  */
 export function summaryText({ profile, people, deliveryDate, picks, estimate }: SummaryInput): string {
-  const meals = picks.length > 0 ? picks.map((p) => p.name ?? '(unnamed meal)').join(' + ') : 'no picks fit';
+  const meals = picks.length > 0 ? picks.map((p) => p.name?.trim() || '(unnamed meal)').join(' + ') : 'no picks fit';
   let total = 'Box total not estimated.';
   if (estimate) {
     const discount =
@@ -268,5 +291,7 @@ export function summaryText({ profile, people, deliveryDate, picks, estimate }: 
         : 'no voucher discount';
     total = `Est. box total ${dollars(estimate.totalCents)} (${discount}).`;
   }
-  return `${profileLabel(profile)} week (${people ?? profile.people} servings) — delivering ${dayLabel(deliveryDate) ?? '(date unknown)'}: ${meals}. ${total}`;
+  const label = profileLabel(profile);
+  const week = /week$/i.test(label.trim()) ? label.trim() : `${label} week`;
+  return `${week} (${people ?? profile.people} servings) — delivering ${dayLabel(deliveryDate) ?? '(date unknown)'}: ${meals}. ${total}`;
 }

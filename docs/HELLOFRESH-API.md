@@ -56,7 +56,9 @@ cart PUT needs), `customer.uuid`, `product.sku` (e.g. `US-CBU-2-6-0`),
 `product.unitPrice` (cents), `preset` ("pescatarian"…), `deliveryWeekday`
 (1=Mon), `deliveryInterval` (weeks), `deliveryTime` / `deliveryOption.handle`
 (e.g. `US-1-0800-2000` = Mondays 8AM–8PM), `nextDeliveryWeek`, `nextCutoffDate`,
-`nextModifiableDeliveryWeek`, `customerPlanId`, `couponCode`, `pausedAt`,
+`nextModifiableDeliveryWeek`, `firstDeliveryWeek` (ISO week of the account's
+first box), `firstBoxDelivered` (boolean — false on a new account whose first box
+is still upcoming), `customerPlanId`, `couponCode`, `pausedAt`,
 `canceledAt`, `isActive`, `voucherInfo` (see Pricing). Also carries name, email,
 shipping/billing address, payment token — NEVER return those unprojected.
 
@@ -126,6 +128,10 @@ minus the voucher discount for that box number:
 `subscription.voucherInfo` → `{code, is_active, discount_type:'percent', discount_settings:{box_count:52, discount_rule:{box_rule:{"1":{applicable_to:'both', discount_value:6500}, "2":{applicable_to:'products', discount_value:1500}, …}}}}`
 — `discount_value` is in hundredths of a percent (6500 = 65%, 1500 = 15%);
 `applicable_to: 'products'` = product price only, `'both'` = product + shipping/fees.
-Box number = count of delivered boxes + upcoming position (first box = 1).
+Box number = count of delivered boxes + upcoming position (first box = 1); a skipped
+(`PAUSED`) week takes no box number. When `firstBoxDelivered` is false the earliest
+`RUNNING` upcoming delivery is box 1. When it is true, no delivered-box count is
+readable, so the tools ASSUME the next running box is box 2 and say so (`next_box_number`
+overrides).
 Checked: a 6-person box $147.48 + $12.99 fee = $160.47; 15% of $147.48 = $22.12 off. A 2-person box $59.96 + $12.99 = $72.95.
 Always label it an estimate and flag when `voucherInfo` is missing/inactive.

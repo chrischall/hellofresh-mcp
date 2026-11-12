@@ -96,7 +96,13 @@ One box a week. For the next week still before its cutoff:
    estimated total and discount, a voucher warning, a one-line summary, and the
    exact write calls to make next. (`hf_suggest_meals` gives just the ranked
    picks with reasons; it skips recipes picked in the profile's recent weeks.)
-   Pass `people` to override the profile's servings for one week.
+   Pass `people` to override the profile's servings for one week. Every pick
+   and alternate is a distinct recipe: a course in the profile's categories is
+   offered as itself, and a protein swap only when it turns an out-of-profile
+   course into one that fits (the cheapest such swap, never a "2x" upgrade when
+   a single-protein swap fits). `boxNumberNote` says how the box number behind
+   the voucher discount was worked out (box 1 when the first box is not yet
+   delivered; otherwise an assumption you can correct with `next_box_number`).
 3. Show the summary — e.g. `Family week (4 servings) — delivering Mon 11/30:
    <A> + <B>. Est. box total $X (−$Y promo voucher).` — with the alternates, and
    wait for the user's choice.

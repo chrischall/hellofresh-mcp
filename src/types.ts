@@ -36,6 +36,10 @@ export interface RawSubscription {
   nextDeliveryWeek?: string;
   nextCutoffDate?: string;
   nextModifiableDeliveryWeek?: string;
+  /** The ISO week of the account's first box. */
+  firstDeliveryWeek?: string;
+  /** Whether that first box has been delivered (false on a new account: the next running box is box 1). */
+  firstBoxDelivered?: boolean;
   customerPlanId?: string;
   couponCode?: string | null;
   pausedAt?: string | null;

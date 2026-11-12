@@ -56,25 +56,20 @@ describe('suggestMeals on the fixture menu', () => {
     expect(s.profile).toBe('family');
     expect(s.people).toBe(6);
     expect(s.maxPremiumPerServingCents).toBe(500);
-    expect(s.picks.map((p) => p.index)).toEqual([53, 558]);
+    expect(s.picks.map((p) => p.index)).toEqual([53, 30]);
     expect(s.picks.map((p) => p.protein).sort()).toEqual(['fish', 'shrimp']);
     const [shrimp, fish] = s.picks;
     expect(shrimp!.reasons).toEqual(['kid friendly', 'ready in 25 min']);
-    expect(fish!.baseIndex).toBe(67);
-    expect(fish!.name).toBe('Pesto Salmon Linguine with Spinach');
+    expect(fish!.baseIndex).toBeUndefined();
+    expect(fish!.name).toBe('Air-Fried Gochujang Salmon ');
     // Only Seafood is considered; only the over-cap premiums are excluded.
     expect(s.ranked.every((c) => c.category === 'Seafood')).toBe(true);
     const excluded = Object.fromEntries(s.excluded.map((e) => [e.index, e.reason]));
     expect(excluded[47]).toMatch(/\$14\.99\/serving over the \$5\.00 cap/);
-    expect(excluded[560]).toBeUndefined(); // +$4.99 is under the cap
     // Two alternates per slot, none repeating a pick or each other.
     expect(s.alternates).toHaveLength(2);
     const alt = s.alternates.flatMap((a) => a.options.map((o) => o.index));
-    expect(alt).toHaveLength(4);
-    expect(new Set(alt).size).toBe(4);
-    expect(alt.some((i) => [53, 558].includes(i))).toBe(false);
-    // An alternate never shares a course with the OTHER slot's pick.
-    expect(s.alternates[0]!.options.some((o) => o.index === 67 || o.baseIndex === 67)).toBe(false);
+    expect(alt).toEqual([67, 13, 43, 63]);
     // The slot's own protein first.
     expect(s.alternates[0]!.options[0]!.protein).toBe('shrimp');
     expect(s.alternates[1]!.options[0]!.protein).toBe('fish');
@@ -84,11 +79,11 @@ describe('suggestMeals on the fixture menu', () => {
     const s = suggestMeals(MENU, { profile: FAMILY, maxPremiumPerServingCents: 2000 });
     const by = (i: number) => s.ranked.find((c) => c.index === i)!;
     expect(s.maxPremiumPerServingCents).toBe(2000);
-    expect(by(560).premiumBoxCents).toBe(2994);
-    expect(by(560).reasons).toContain('premium +$4.99/serving (+$29.94 for 6 servings)');
+    expect(by(47).premiumBoxCents).toBe(8994);
+    expect(by(47).reasons).toContain('premium +$14.99/serving (+$89.94 for 6 servings)');
     expect(by(43).reasons).toContain('takes 45 min (over 30)');
     expect(by(30).reasons).toContain('spicy');
-    expect(by(560).score).toBeLessThan(by(67).score);
+    expect(by(47).score).toBeLessThan(by(67).score);
   });
 
   it('adventurous profile: unfamiliar cuisines boosted, premiums allowed up to the cap and lightly penalised', () => {
@@ -123,13 +118,13 @@ describe('suggestMeals on the fixture menu', () => {
     const s = suggestMeals(MENU, {
       profile: FAMILY,
       avoidIndexes: [53],
-      avoidNames: ['  pesto salmon linguine with SPINACH '],
+      avoidNames: ['  air-fried GOCHUJANG   salmon'],
     });
     const reasons = Object.fromEntries(s.excluded.map((e) => [e.index, e.reason]));
     expect(reasons[53]).toBe('avoided by request');
-    expect(reasons[558]).toBe('picked in a recent week');
+    expect(reasons[30]).toBe('picked in a recent week');
     expect(s.picks.map((p) => p.index)).not.toContain(53);
-    expect(s.picks.map((p) => p.index)).not.toContain(558);
+    expect(s.picks.map((p) => p.index)).not.toContain(30);
   });
 
   it('marks the dishes already picked for the week', () => {
@@ -187,10 +182,10 @@ describe('suggestMeals edge cases', () => {
       ],
     });
     const s = suggestMeals(menuOf(base), { profile: COUPLE });
-    expect(s.picks).toHaveLength(1);
-    expect(s.ranked.map((c) => c.index).sort()).toEqual([10, 11]);
+    expect(s.picks.map((p) => p.index)).toEqual([10]);
+    expect(s.ranked.map((c) => c.index)).toEqual([10]);
     expect(s.warning).toMatch(/Only 1 of the 2 meals.*\(seafood\)/);
-    expect(s.alternates[0]!.options.map((o) => o.index)).toEqual([11]);
+    expect(s.alternates[0]!.options).toEqual([]);
   });
 
   it('nothing in the allowed categories → no picks and a warning', () => {
@@ -264,6 +259,19 @@ describe('summary text', () => {
     );
   });
 
+  it('trims recipe names in the line', () => {
+    expect(summaryText({ profile: FAMILY, deliveryDate: undefined, picks: [{ name: 'Air-Fried Salmon ' }], estimate: undefined })).toMatch(
+      /: Air-Fried Salmon\. Box total/,
+    );
+  });
+
+  it('a label already ending in "week" is not doubled', () => {
+    const line = (label: string) => summaryText({ profile: { ...FAMILY, label }, deliveryDate: undefined, picks, estimate: undefined });
+    expect(line('Family week')).toMatch(/^Family week \(6 servings\) — /);
+    expect(line('Family WEEK')).toMatch(/^Family WEEK \(6 servings\) — /);
+    expect(line('Date night')).toMatch(/^Date night week \(6 servings\) — /);
+  });
+
   it('says when no discount applies, no estimate exists, or nothing fits', () => {
     expect(
       summaryText({ profile: COUPLE, deliveryDate: undefined, picks: [], estimate: { totalCents: 7295, discountCents: 0 } }),
@@ -282,5 +290,120 @@ describe('summary text', () => {
     expect(dayLabel('2026-11-29T00:00:00-05:00')).toBe('Sun 11/29');
     expect(dayLabel('nonsense')).toBeUndefined();
     expect(dayLabel(undefined)).toBeUndefined();
+  });
+});
+
+describe('one dish per recipe (base course vs protein swap)', () => {
+  const variant = (index: number, over: Partial<ProjectedMeal['variants'][number]> = {}): ProjectedMeal['variants'][number] => ({
+    index,
+    title: `Swap ${index}`,
+    name: `Swap ${index}`,
+    category: 'Seafood',
+    isSeafood: true,
+    seafoodKind: 'fish',
+    premiumPerServingCents: 0,
+    premiumBoxCents: 0,
+    selectedQuantity: 0,
+    ...over,
+  });
+  const recipeOf = (c: { index: number; baseIndex?: number }) => c.baseIndex ?? c.index;
+
+  it('a base course that already matches the categories is suggested as itself, never as an upgrade swap', () => {
+    const s = suggestMeals(MENU, { profile: FAMILY, maxPremiumPerServingCents: 5000 });
+    const indexes = s.ranked.map((c) => c.index);
+    expect(indexes).toContain(67);
+    // #67's Seafood swaps (2x Shrimp, Salmon, Lobster Tails) are the same recipe: never offered.
+    for (const swap of [558, 560, 565, 567]) expect(indexes).not.toContain(swap);
+    expect(s.ranked.every((c) => c.baseIndex === undefined)).toBe(true);
+  });
+
+  it('on the real menu: a Poultry week takes the chicken swap of a Seafood course, as its own recipe', () => {
+    const s = suggestMeals(MENU, { profile: { ...ANY, categories: ['Poultry'], meals: 2 } });
+    expect(s.ranked.map((c) => [c.index, c.baseIndex])).toEqual(expect.arrayContaining([[1, undefined], [565, 67]]));
+    expect(s.ranked).toHaveLength(2);
+    expect(s.picks.map((p) => p.index).sort()).toEqual([1, 565]);
+  });
+
+  it('a double-protein upgrade of a matching base (e.g. "with 2x Tilapia") is never chosen over the base', () => {
+    const base = meal({
+      index: 71,
+      name: 'Tilapia Sandos',
+      seafoodKind: 'fish',
+      kidFriendly: true,
+      variants: [variant(567, { title: '2x Tilapia', name: 'Tilapia Sandos with 2x Tilapia', premiumPerServingCents: 399, premiumBoxCents: 2394 })],
+    });
+    const s = suggestMeals(menuOf(base, meal({ index: 5, seafoodKind: 'shrimp' })), { profile: FAMILY });
+    expect(s.picks.map((p) => p.index)).toEqual([71, 5]);
+    expect(s.ranked.map((c) => c.index)).not.toContain(567);
+  });
+
+  it('a non-matching base uses its cheapest qualifying swap, avoiding double-protein swaps when another qualifies', () => {
+    const chicken = (variants: ProjectedMeal['variants']) =>
+      meal({ index: 10, category: 'Poultry', isSeafood: false, seafoodKind: null, variants });
+    const pick = (variants: ProjectedMeal['variants']) =>
+      suggestMeals(menuOf(chicken(variants)), { profile: COUPLE }).ranked.map((c) => c.index);
+    // Cheapest qualifying swap wins; the chicken swap never qualifies.
+    expect(
+      pick([
+        variant(11, { title: 'Shrimp', premiumPerServingCents: 399 }),
+        variant(12, { title: 'Salmon', premiumPerServingCents: 199 }),
+        variant(13, { title: 'Chicken Thighs', category: 'Poultry', isSeafood: false, seafoodKind: null }),
+      ]),
+    ).toEqual([12]);
+    // A free "2x Shrimp" loses to a single-protein swap with a premium.
+    expect(
+      pick([
+        variant(11, { title: '2x Shrimp', seafoodKind: 'shrimp' }),
+        variant(12, { title: 'Shrimp', seafoodKind: 'shrimp', premiumPerServingCents: 299 }),
+      ]),
+    ).toEqual([12]);
+    // "2x" in the recipe name counts too.
+    expect(
+      pick([
+        variant(11, { title: 'Shrimp', name: 'Bowls with 2x Shrimp', seafoodKind: 'shrimp' }),
+        variant(12, { title: 'Cod', premiumPerServingCents: 299 }),
+      ]),
+    ).toEqual([12]);
+    // Only a double-protein swap qualifies → it is used.
+    expect(pick([variant(11, { title: '2x Shrimp', seafoodKind: 'shrimp', premiumPerServingCents: 499 })])).toEqual([11]);
+    // A swap with neither title nor name is a single-protein swap.
+    expect(
+      pick([
+        variant(11, { title: '2x Shrimp', seafoodKind: 'shrimp' }),
+        variant(12, { title: undefined, name: undefined, premiumPerServingCents: 99 }),
+      ]),
+    ).toEqual([12]);
+    // Ties on premium: the lower index.
+    expect(pick([variant(15, { title: 'Cod' }), variant(14, { title: 'Salmon' })])).toEqual([14]);
+  });
+
+  it('picks and alternates are all distinct recipes', () => {
+    const shrimpBowl = meal({
+      index: 53,
+      seafoodKind: 'shrimp',
+      kidFriendly: true,
+      variants: [variant(465, { title: '2x Shrimp', seafoodKind: 'shrimp' }), variant(466, { title: 'Salmon' })],
+    });
+    const chickenBase = meal({
+      index: 20,
+      category: 'Poultry',
+      isSeafood: false,
+      seafoodKind: null,
+      variants: [variant(21, { title: 'Shrimp', seafoodKind: 'shrimp' }), variant(22, { title: 'Cod' })],
+    });
+    const others = [1, 2, 3, 4].map((index) => meal({ index }));
+    for (const profile of [FAMILY, COUPLE]) {
+      const s = suggestMeals(menuOf(shrimpBowl, chickenBase, ...others), { profile });
+      const all = [...s.picks, ...s.alternates.flatMap((a) => a.options)];
+      expect(all.length).toBeGreaterThanOrEqual(4);
+      expect(new Set(all.map(recipeOf)).size).toBe(all.length);
+      expect(all.map((c) => c.index)).not.toContain(465);
+      expect(all.map((c) => c.index)).not.toContain(466);
+    }
+  });
+
+  it('without a category allowlist every base course stands for its recipe', () => {
+    const base = meal({ index: 10, variants: [variant(11), variant(12, { category: 'Poultry', isSeafood: false, seafoodKind: null })] });
+    expect(suggestMeals(menuOf(base), { profile: ANY }).ranked.map((c) => c.index)).toEqual([10]);
   });
 });

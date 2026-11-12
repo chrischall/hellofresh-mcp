@@ -19,9 +19,9 @@ import { isoWeekOf, shiftWeek } from '../weeks.js';
 import type { RawSubscription } from '../types.js';
 import { LOOKUP, foodMeta } from './hints.js';
 import {
-  DEFAULT_NEXT_BOX_NUMBER,
   HF_VIEWS,
   attempt,
+  boxNumbering,
   boxNumbers,
   briefLine,
   byWeek,
@@ -191,7 +191,8 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
         const lines = deliveries.map(briefLine);
         return { content: [{ type: 'text', text: (lines.length > 0 ? lines : ['-- none']).join('\n') }] } satisfies CallToolResult;
       }
-      const numbers = boxNumbers(deliveries, next_box_number ?? DEFAULT_NEXT_BOX_NUMBER);
+      const numbering = boxNumbering(account.subscription, next_box_number);
+      const numbers = boxNumbers(deliveries, numbering.next);
       const full = view === 'full';
       return minifiedResult({
         deliveries: deliveries.map((d) => {
@@ -203,8 +204,7 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
         }),
         estimateNote:
           'Estimates (running weeks only) are product + fees + shipping minus the voucher, WITHOUT premium meal ' +
-          'upcharges (hf_get_delivery adds those). Box numbers assume the next running box is box ' +
-          `${next_box_number ?? DEFAULT_NEXT_BOX_NUMBER}; pass next_box_number to correct it.`,
+          `upcharges (hf_get_delivery adds those). ${numbering.note}`,
       });
     },
   );
@@ -243,10 +243,11 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
       const selection = menu?.ok ? menu.value.selected.map(compactSelection) : undefined;
 
       let estimate;
+      let boxNumberNote: string | undefined;
       if (running) {
-        const boxNumber =
-          box_number ??
-          boxNumbers((upcoming.items ?? []).map(projectDelivery), next_box_number ?? DEFAULT_NEXT_BOX_NUMBER).get(week);
+        const numbering = boxNumbering(account.subscription, next_box_number);
+        if (box_number === undefined) boxNumberNote = numbering.note;
+        const boxNumber = box_number ?? boxNumbers((upcoming.items ?? []).map(projectDelivery), numbering.next).get(week);
         estimate = estimateFor(delivery, selection ?? [], account, boxNumber);
         if (!selection) {
           const note = 'The menu could not be read, so premium upcharges are not included.';
@@ -269,6 +270,7 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
         ...(selection ? { selection } : {}),
         ...(menu && !menu.ok ? { selectionError: menu.reason } : {}),
         ...(estimate ? { estimate: full ? estimate : compactEstimate(estimate) } : {}),
+        ...(boxNumberNote ? { boxNumberNote } : {}),
       });
     },
   );
