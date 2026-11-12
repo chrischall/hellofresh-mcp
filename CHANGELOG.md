@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/chrischall/hellofresh-mcp/compare/v0.2.0...v0.3.0) (2026-11-12)
+
+
+### Features
+
+* pantry check — what to have on hand that HelloFresh doesn't ship ([#6](https://github.com/chrischall/hellofresh-mcp/issues/6)) ([a38d548](https://github.com/chrischall/hellofresh-mcp/commit/a38d548900f2bff062ee44b12b15e68af93a79de))
+
 ## [0.2.0](https://github.com/chrischall/hellofresh-mcp/compare/v0.1.0...v0.2.0) (2026-11-12)
 
 
