@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.skill
+*.mcpb
+.claude/worktrees/
+.DS_Store

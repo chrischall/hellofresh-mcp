@@ -1,0 +1,10 @@
+{
+  // Typechecks tests alongside src. tsconfig.json leaves tests/ out because it
+  // also drives the build (rootDir "src"); vitest transpiles without
+  // typechecking, so without this a type error in a test passes every suite
+  // and is never reported.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "rootDir": "." },
+  "include": ["src/**/*", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

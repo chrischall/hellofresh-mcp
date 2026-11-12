@@ -1,0 +1,58 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.chrischall/hellofresh-mcp",
+  "description": "Unofficial HelloFresh (US) MCP for Claude — deliveries, menus, meal picks, skips and box sizes",
+  "repository": {
+    "url": "https://github.com/chrischall/hellofresh-mcp",
+    "source": "github"
+  },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@chrischall/hellofresh-mcp",
+      "version": "0.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "HELLOFRESH_WS_PORT",
+          "description": "fetchproxy bridge concentrator port. Defaults to the fleet-shared 37149.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "HELLOFRESH_DEBUG",
+          "description": "Truthy logs the fetchproxy bridge's role and lifecycle to stderr.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "MCP_CONFIRM_MODE",
+          "description": "What a confirmation-gated write does on a client without a confirmation prompt: ask-user (default), auto, or refuse.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "MCP_CONFIRM_ELICITATION",
+          "description": "on (default) confirms writes with an MCP elicitation prompt when the client supports one; off always uses the MCP_CONFIRM_MODE path.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "HELLOFRESH_PROFILES",
+          "description": "Meal-planner profiles as an inline JSON array (wins over HELLOFRESH_PROFILES_FILE). Unset: the file, else the built-in couple/family profiles.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "HELLOFRESH_PROFILES_FILE",
+          "description": "Path to a JSON file of meal-planner profiles. Defaults to ~/.config/hellofresh-mcp/profiles.json, read only when it exists.",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

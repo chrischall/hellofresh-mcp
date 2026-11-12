@@ -1,0 +1,164 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/dxt/main/dist/mcpb-manifest.schema.json",
+  "manifest_version": "0.3",
+  "name": "hellofresh-mcp",
+  "display_name": "HelloFresh",
+  "version": "0.0.0",
+  "description": "Unofficial HelloFresh (US) tools for Claude — subscription, weekly deliveries, menus, meal picks, skips and box sizes via your signed-in browser",
+  "author": {
+    "name": "Chris Chall",
+    "url": "https://github.com/chrischall"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chrischall/hellofresh-mcp"
+  },
+  "homepage": "https://github.com/chrischall/hellofresh-mcp",
+  "support": "https://github.com/chrischall/hellofresh-mcp/issues",
+  "license": "MIT",
+  "keywords": [
+    "hellofresh",
+    "meal-kit",
+    "meal-planning",
+    "recipes",
+    "food",
+    "groceries"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/bundle.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/bundle.js"
+      ],
+      "env": {
+        "HELLOFRESH_WS_PORT": "${user_config.hellofresh_ws_port}",
+        "MCP_CONFIRM_MODE": "${user_config.confirm_mode}",
+        "MCP_CONFIRM_ELICITATION": "${user_config.confirm_elicitation}",
+        "HELLOFRESH_DEBUG": "${user_config.debug}",
+        "HELLOFRESH_PROFILES": "${user_config.profiles}",
+        "HELLOFRESH_PROFILES_FILE": "${user_config.profiles_file}"
+      }
+    }
+  },
+  "user_config": {
+    "hellofresh_ws_port": {
+      "type": "number",
+      "title": "Bridge port",
+      "description": "The fetchproxy bridge port. The whole fetchproxy fleet and ContextMint Bridge share `37149`; override only for local testing (or when a host injects a per-registration port). Defaults to 37149.",
+      "required": false
+    },
+    "confirm_mode": {
+      "type": "string",
+      "title": "Write confirmation mode (optional)",
+      "description": "Optional. What a confirmation-gated HelloFresh change (meal picks, skips, box size, delivery day) does on a client that cannot show a confirmation prompt: \"ask-user\" (default: the first call returns a preview and a confirmToken, and the model must get your approval in chat before using it), \"auto\" (the model may use the token after reviewing the preview itself) or \"refuse\". An unrecognised value is treated as refuse. Leave blank for the default.",
+      "required": false
+    },
+    "confirm_elicitation": {
+      "type": "string",
+      "title": "Confirmation prompts (optional)",
+      "description": "Optional. \"off\" never shows a confirmation prompt, so every client gets the confirmation-mode flow. Set it for a client that says it can show prompts but never does. Defaults to on. Leave blank for the default.",
+      "required": false
+    },
+    "debug": {
+      "type": "boolean",
+      "title": "Debug logging",
+      "description": "Log the browser bridge role and lifecycle to stderr. Diagnostic only; off by default.",
+      "required": false,
+      "default": false
+    },
+    "profiles": {
+      "type": "string",
+      "title": "Planner profiles (optional)",
+      "description": "Optional. The meal-planner profiles as an inline JSON array, e.g. [{\"name\":\"family\",\"people\":4,\"kidFriendly\":true,\"premiumCapCents\":500}]. Wins over the profiles file. Leave blank for the file or the built-in couple/family profiles.",
+      "required": false
+    },
+    "profiles_file": {
+      "type": "string",
+      "title": "Planner profiles file (optional)",
+      "description": "Optional. Path to a JSON file of meal-planner profiles. Defaults to ~/.config/hellofresh-mcp/profiles.json (used only when it exists).",
+      "required": false
+    }
+  },
+  "tools": [
+    {
+      "name": "hf_healthcheck",
+      "description": "Check the ContextMint Bridge link, the HelloFresh session token and a subscriptions-endpoint probe (status only)."
+    },
+    {
+      "name": "hf_get_subscription",
+      "description": "Read the subscription: box size, price, preset, delivery slot and frequency, next delivery and cutoff, voucher (never name, email, address or payment)."
+    },
+    {
+      "name": "hf_list_deliveries",
+      "description": "List upcoming delivery weeks: dates, cutoff, status, box size and an estimated total with the voucher discount (brief view: one line per week)."
+    },
+    {
+      "name": "hf_get_delivery",
+      "description": "Read one delivery week: dates, status, box size, current meal picks, allowed actions, alternative days and an estimated total including premiums."
+    },
+    {
+      "name": "hf_get_menu",
+      "description": "Read a week's menu at its box size, with seafood/kid-friendly/time/premium/selected filters and protein swaps."
+    },
+    {
+      "name": "hf_list_box_sizes",
+      "description": "List the box sizes (meals x people) the subscription can switch to, marking the current one."
+    },
+    {
+      "name": "hf_recent_picks",
+      "description": "List the meals picked in recent weeks (best effort, unreadable weeks named) to avoid repeating a recipe."
+    },
+    {
+      "name": "hf_select_meals",
+      "description": "Pick the meals for one delivery week (replaces the current picks), confirm-gated and verified by re-reading the menu."
+    },
+    {
+      "name": "hf_set_week_size",
+      "description": "Change one week's box size (people, optionally meals) only, keeping its delivery day; confirm-gated and verified."
+    },
+    {
+      "name": "hf_set_week_delivery_day",
+      "description": "Move one week's delivery to another offered day/slot, keeping its box size; confirm-gated and verified."
+    },
+    {
+      "name": "hf_skip_week",
+      "description": "Skip one delivery week (nothing delivered or charged) before its cutoff; confirm-gated and verified."
+    },
+    {
+      "name": "hf_unskip_week",
+      "description": "Unskip one skipped delivery week before its cutoff; confirm-gated and verified."
+    },
+    {
+      "name": "hf_change_plan_size",
+      "description": "Permanently change the plan's box size (meals x people); confirm-gated and verified by re-reading the plan."
+    },
+    {
+      "name": "hf_change_delivery_schedule",
+      "description": "Permanently change the regular delivery slot and/or frequency (every 1-4 weeks); confirm-gated and verified."
+    },
+    {
+      "name": "hf_list_profiles",
+      "description": "List the meal-planner profiles (servings, meals, categories, preferences, premium cap) and where they were loaded from; local config only."
+    },
+    {
+      "name": "hf_suggest_meals",
+      "description": "Suggest a week's dinners for a planner profile (e.g. a 4-person kid-friendly week), with alternates and reasons; read-only."
+    },
+    {
+      "name": "hf_weekly_plan",
+      "description": "Plan a delivery week for a planner profile: box size needed, suggested picks, estimated total, approval summary and the follow-up writes; read-only."
+    }
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=22.5.0"
+    }
+  }
+}

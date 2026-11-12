@@ -1,0 +1,76 @@
+name: CI fork status
+
+# Thin stub. Posts the `ci-gated` commit status for FORK pull requests, which
+# cannot post it themselves.
+#
+# Why this exists: GitHub caps `GITHUB_TOKEN` to read-only for `pull_request`
+# runs from a fork, whatever the CI stub's `permissions:` block asks for — so
+# the `ci-gated` POST 403s. Before this, `ci / ci` carried a real pass/fail but
+# `ci-gated` was never reported, leaving the required context permanently
+# unsatisfied: an external contribution could never be merged without a
+# maintainer hand-posting a status.
+#
+# `workflow_run` fires in the BASE repo's context, so its token really does
+# have `statuses: write`.
+#
+# SECURITY — read before editing. `workflow_run` is the classic "pwn request"
+# footgun: it has a write token and is triggered by an untrusted fork. This
+# workflow is safe ONLY because it never fetches, checks out, builds or
+# executes anything from the head repository. It reads five scalars off the
+# event payload and nothing else: `event` and `head_repository.full_name` gate
+# the job below and go no further, while `head_sha`, `conclusion` and
+# `html_url` are handed to the composite action through `with:`. Do NOT add
+# `actions/checkout` here. Of the three that travel onward only `head_sha` is
+# named by the fork, and inside the action every input is bound to an `env:`
+# var and referenced as "$SHA" rather than interpolated into the script body —
+# keep it that way.
+#
+# What this DOES weaken, stated plainly: a fork PR can now satisfy `ci-gated`,
+# so the merge no longer waits for a maintainer to post one by hand. Two human
+# gates remain and are what this relies on:
+#
+#   1. GitHub holds fork workflow runs at `action_required` until a maintainer
+#      approves them, so CI never runs on unreviewed external code — and this
+#      workflow only ever reports a run that a human already approved.
+#   2. a fork is armed only when a maintainer types `/auto-review` on it. No
+#      event reviews a fork on its own, the command's author_association is
+#      checked before anything runs, and auto-merge excludes forks by head
+#      repo — so arming a fork starts its CI, never its merge.
+#
+# This reports CI; it does not vouch for it. But note that the run's conclusion
+# alone does NOT say whether CI ran: an un-armed fork PR defers the build and
+# the run still concludes `success`, which is how this workflow once posted a
+# green `ci-gated` for a commit nothing had compiled (skylight-mcp#148). The
+# action therefore re-derives the gate's arming decision from the PR's labels
+# and mirrors a conclusion only for a run that was armed; everything else is
+# reported `pending`, the same block the gate gives a same-repo un-armed PR.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+  statuses: write
+  # Read-only, and load-bearing: the action decides whether CI actually RAN by
+  # reading the PR's `ready-to-merge` label. Without this grant the lookup
+  # fails and every fork PR is reported blocked rather than green — safe, but
+  # unmergeable, so this must ship together with the action.
+  pull-requests: read
+
+jobs:
+  report:
+    # Fork PRs only. A same-repo PR posts its own `ci-gated` from the CI run,
+    # and posting a second one here would race it.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: chrischall/workflows/.github/actions/fork-ci-status@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          sha: ${{ github.event.workflow_run.head_sha }}
+          conclusion: ${{ github.event.workflow_run.conclusion }}
+          run-url: ${{ github.event.workflow_run.html_url }}

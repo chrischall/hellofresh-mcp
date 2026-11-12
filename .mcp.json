@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "hellofresh": {
+      "command": "npx",
+      "args": ["-y", "@chrischall/hellofresh-mcp"]
+    }
+  }
+}

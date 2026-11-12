@@ -1,0 +1,76 @@
+version: 1
+name: HelloFresh
+slug: hellofresh
+# Hosting: browser-bridge bootstrap. The fetchproxy bridge reads (and, after a
+# refresh, writes back) the apiV2Auth cookie through the user's signed-in
+# https://www.hellofresh.com/ tab; every API call is then a plain Node fetch
+# with a Bearer token. So the registration needs `bridge: true` and
+# `bridgePortEnv: HELLOFRESH_WS_PORT` — registration fields this manifest
+# cannot express (they are set over the control API). No per-user credential
+# fields: the browser session IS the credential.
+summary: >-
+  Plan your HelloFresh (US) box — read your subscription, upcoming deliveries
+  and weekly menus, pick meals, change box size or delivery day, and skip
+  weeks with confirmation.
+examples:
+  - prompt: What HelloFresh boxes are coming up, and which weeks are skipped?
+    note: Reads upcoming deliveries with cutoff dates.
+  - prompt: Show me the seafood meals on next week's HelloFresh menu.
+    note: Read-only; filters the weekly menu.
+  - prompt: Pick two seafood dinners for next week's box.
+    note: Changes your meal selection; shows a preview and waits for your confirmation.
+  - prompt: Skip my HelloFresh delivery for Thanksgiving week.
+    note: Skips a week; shows a preview and waits for your confirmation.
+env:
+  - name: HELLOFRESH_WS_PORT
+    required: false
+    help: >-
+      Concentrator port for the fetchproxy bridge (defaults to the fleet-shared
+      37149). The runner injects a per-registration port for a hosted bridged
+      child, so this is the name to give `bridgePortEnv` at registration.
+  - name: HELLOFRESH_DEBUG
+    required: false
+    help: >-
+      Truthy logs the fetchproxy bridge's role and lifecycle to stderr.
+      Diagnostic only.
+  - name: MCP_CONFIRM_MODE
+    required: false
+    help: >-
+      What a confirmation-gated write does on a client that cannot show a
+      confirmation prompt: ask-user (default; preview + token, the user
+      approves in chat), auto (the model may use the token itself after the
+      preview), or refuse. An unrecognised value is treated as refuse.
+  - name: MCP_CONFIRM_ELICITATION
+    required: false
+    help: >-
+      on (default) confirms writes with an MCP elicitation prompt when the
+      client supports one; off never prompts, so every client takes the
+      MCP_CONFIRM_MODE path (for clients that declare elicitation but never
+      render it).
+  - name: HELLOFRESH_PROFILES
+    required: false
+    help: >-
+      Meal-planner profiles as an inline JSON array, e.g.
+      [{"name":"family","people":4,"kidFriendly":true,"premiumCapCents":500}].
+      Not a secret. Prefer this when hosted: it wins over
+      HELLOFRESH_PROFILES_FILE and needs no file on disk. Unset, the built-in
+      couple and family profiles apply.
+  - name: HELLOFRESH_PROFILES_FILE
+    required: false
+    help: >-
+      Path to a JSON file of meal-planner profiles (default
+      ~/.config/hellofresh-mcp/profiles.json, read only when it exists). When
+      hosted, the file must live under the persistent dataDir; otherwise use
+      HELLOFRESH_PROFILES.
+state:
+  dataDir: true
+  reason: >-
+    keeps the fetchproxy identity under
+    $HOME/.fetchproxy/identity/hellofresh-mcp.json so the browser pairing
+    survives restarts; without it every cold start asks the user to re-pair
+# The server process dials only the HelloFresh API on www.hellofresh.com. The
+# apiV2Auth cookie is read and written only by the user's browser over the
+# bridge, never by this process.
+egress:
+  allow:
+    - www.hellofresh.com

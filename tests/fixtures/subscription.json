@@ -1,0 +1,36 @@
+{
+  "id": "90000001",
+  "customer": { "id": 12345678, "uuid": "00000000-0000-4000-8000-000000000001", "firstName": "Pat", "lastName": "Example", "email": "pat@example.com" },
+  "product": { "sku": "US-CBU-2-6-0", "unitPrice": 14748, "name": "Classic box" },
+  "preset": "pescatarian",
+  "deliveryWeekday": 1,
+  "deliveryInterval": 1,
+  "deliveryTime": "US-1-0800-2000",
+  "deliveryOption": { "handle": "US-1-0800-2000", "deliveryName": "Monday 8AM-8PM" },
+  "nextDeliveryWeek": "2026-W49",
+  "nextCutoffDate": "2026-11-25T23:59:59-05:00",
+  "nextModifiableDeliveryWeek": "2026-W49",
+  "customerPlanId": "11111111-2222-4333-8444-555555555555",
+  "couponCode": "EXAMPLE65",
+  "pausedAt": null,
+  "canceledAt": null,
+  "isActive": true,
+  "shippingAddress": { "firstName": "Pat", "lastName": "Example", "address1": "123 Example St", "city": "Exampleville", "postcode": "00000", "phone": "555-0100" },
+  "billingAddress": { "address1": "123 Example St" },
+  "paymentToken": "tok_synthetic_000",
+  "voucherInfo": {
+    "code": "EXAMPLE65",
+    "is_active": true,
+    "discount_type": "percent",
+    "discount_settings": {
+      "box_count": 52,
+      "discount_rule": {
+        "box_rule": {
+          "1": { "applicable_to": "both", "discount_value": 6500 },
+          "2": { "applicable_to": "products", "discount_value": 1500 },
+          "3": { "applicable_to": "products", "discount_value": 1500 }
+        }
+      }
+    }
+  }
+}

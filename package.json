@@ -1,0 +1,70 @@
+{
+  "name": "@chrischall/hellofresh-mcp",
+  "version": "0.0.0",
+  "license": "MIT",
+  "mcpName": "io.github.chrischall/hellofresh-mcp",
+  "description": "Unofficial HelloFresh (US) MCP server for Claude — subscription, weekly deliveries, menus, meal picks, skips and box sizes — developed and maintained by AI (Claude Code)",
+  "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chrischall/hellofresh-mcp.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "hellofresh",
+    "meal-kit",
+    "meal-planning",
+    "recipes",
+    "food",
+    "groceries"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "hellofresh-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    ".claude-plugin",
+    "skills",
+    ".mcp.json",
+    "manifest.json",
+    "server.json",
+    "mint.yaml"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc && npm run bundle",
+    "bundle": "esbuild src/index.ts --bundle --alias:zod/v4=./node_modules/zod/v4/index.cjs --platform=node --format=esm --external:dotenv --banner:js='import { createRequire as __createRequire } from \"module\"; const require = __createRequire(import.meta.url);' --outfile=dist/bundle.js",
+    "dev": "node --env-file=.env dist/index.js",
+    "test": "npm run typecheck && vitest run",
+    "test:coverage": "npm run typecheck && vitest run --coverage",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@chrischall/mcp-utils": "^3.7.2",
+    "@fetchproxy/server": "^3.7.0",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "dotenv": "^18.0.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/node": "^26.1.0",
+    "@vitest/coverage-v8": "^5.0.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  },
+  "allowScripts": {
+    "esbuild": false,
+    "fsevents": false
+  }
+}

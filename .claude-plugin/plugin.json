@@ -1,0 +1,21 @@
+{
+  "name": "hellofresh",
+  "displayName": "HelloFresh",
+  "version": "0.0.0",
+  "description": "Unofficial HelloFresh (US) tools for Claude — subscription, weekly deliveries, menus, meal picks, skips and box sizes via MCP",
+  "author": {
+    "name": "Chris Chall"
+  },
+  "homepage": "https://github.com/chrischall/hellofresh-mcp",
+  "repository": "https://github.com/chrischall/hellofresh-mcp",
+  "license": "MIT",
+  "keywords": [
+    "hellofresh",
+    "meal-kit",
+    "meal-planning",
+    "recipes",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

@@ -1,0 +1,1899 @@
+{
+ "id": "000000000000000000000049",
+ "week": "2026-W49",
+ "meals": [
+  {
+   "recipeFamily": "classic-menu",
+   "index": 1,
+   "recipe": {
+    "id": "663a6f45be3ee05a950c3890",
+    "name": "Creamy Sun-Dried Tomato & Chicken Pasta",
+    "headline": "with Parmesan & Scallions",
+    "prepTime": "PT25M",
+    "totalTime": "PT5M",
+    "websiteURL": "https://www.hellofresh.com/recipes/creamy-sun-dried-tomato-and-chicken-pasta-663a6f45be3ee05a950c3890",
+    "label": {
+     "text": "Giving Tuesday",
+     "handle": "giving-tuesday",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#CE4500",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "no-kid-hungry",
+      "type": "no-kid-hungry",
+      "displayLabel": false
+     },
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Low Added Sugar",
+      "type": "low-sugar",
+      "colorHandle": "calorieSmart",
+      "displayLabel": true
+     },
+     {
+      "name": "Kid Friendly",
+      "type": "family-friendly",
+      "colorHandle": "familyFriendly",
+      "preferences": [
+       "Family Friendly",
+       "family"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Easy Prep",
+      "type": "easy-prep",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "pasta-noodles",
+      "type": "pasta-noodles",
+      "displayLabel": false
+     },
+     {
+      "name": "Mediterranean",
+      "type": "mediterranean-hf",
+      "colorHandle": "calorieSmart",
+      "preferences": [
+       "Fit & Wholesome",
+       "Pescatarian",
+       "fit",
+       "pescatarian"
+      ],
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Italian",
+      "type": "italian"
+     }
+    ],
+    "category": "Poultry"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 2,
+   "recipe": {
+    "id": "686bbc879a91734697583452",
+    "name": "Pub-Style Shepherd’s Pie",
+    "headline": "with White Cheddar Mashed Potatoes",
+    "prepTime": "PT45M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/pub-style-shepherds-pie-686bbc879a91734697583452",
+    "tags": [
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Kid Friendly",
+      "type": "family-friendly",
+      "colorHandle": "familyFriendly",
+      "preferences": [
+       "Family Friendly",
+       "family"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "world-flavors",
+      "type": "world-flavors",
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Irish",
+      "type": "irish"
+     }
+    ],
+    "category": "Beef"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 30,
+   "selection": {
+    "limit": 2
+   },
+   "recipe": {
+    "id": "69fb562a05492ed04f07187c",
+    "name": "Air-Fried Gochujang Salmon ",
+    "headline": "with Sweet & Spicy Cucumber-Radish Salad & Garlic-Ginger Rice",
+    "prepTime": "PT25M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/air-fried-gochujang-salmon-69fb562a05492ed04f07187c",
+    "tags": [
+     {
+      "name": "High Protein",
+      "type": "high-protein",
+      "preferences": [
+       "Fit & Wholesome",
+       "Veggie",
+       "Family Friendly",
+       "Quick & Easy",
+       "Pork Free",
+       "Pescatarian",
+       "fit",
+       "veggie",
+       "family",
+       "quick",
+       "porkfree",
+       "pescatarian"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Spicy",
+      "type": "spicy",
+      "colorHandle": "spicy",
+      "preferences": [
+       "Family Friendly",
+       "family"
+      ],
+      "displayLabel": false
+     },
+     {
+      "name": "Classic Plates",
+      "type": "classic-plates",
+      "displayLabel": false
+     },
+     {
+      "name": "pan-asian-plates",
+      "type": "pan-asian-plates",
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Korean",
+      "type": "korean"
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 13,
+   "selection": {
+    "limit": 2
+   },
+   "recipe": {
+    "id": "6819710434c41957efda3f75",
+    "name": "Spicy Coconut Curry Shrimp Noodle Soup",
+    "headline": "with Cabbage & Scallions",
+    "prepTime": "PT20M",
+    "totalTime": "PT5M",
+    "websiteURL": "https://www.hellofresh.com/recipes/spicy-coconut-curry-shrimp-noodle-soup-6819710434c41957efda3f75",
+    "label": {
+     "text": "20 Min or Less",
+     "handle": "20-min-meal",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#1A5DB6",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Under 650 Calories",
+      "type": "under-650-calories",
+      "colorHandle": "calorieSmart",
+      "displayLabel": false
+     },
+     {
+      "name": "Spicy",
+      "type": "spicy",
+      "colorHandle": "spicy",
+      "preferences": [
+       "Family Friendly",
+       "family"
+      ],
+      "displayLabel": false
+     },
+     {
+      "name": "Easy Prep",
+      "type": "easy-prep",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Quick",
+      "type": "quick",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "soup-salad",
+      "type": "soup-salad",
+      "displayLabel": false
+     },
+     {
+      "name": "South/SoutheastAsian",
+      "type": "south-southeastasian",
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Thai",
+      "type": "thai"
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 47,
+   "charge": {
+    "label": "+14.99/serving",
+    "unitAmount": 1499,
+    "totalAmount": 8994,
+    "reason": "premium",
+    "strategy": "per_meal"
+   },
+   "recipe": {
+    "id": "69d8f65a68ee73d4d3ffdbdd",
+    "name": "Romesco-Smothered Sea Bass",
+    "headline": "over Pesto Grains & Greens",
+    "prepTime": "PT20M",
+    "totalTime": "PT5M",
+    "websiteURL": "https://www.hellofresh.com/recipes/romesco-smothered-sea-bass-69d8f65a68ee73d4d3ffdbdd",
+    "label": {
+     "text": "20-MIN PREMIUM",
+     "handle": "fresh-fast",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#333332",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "New",
+      "type": "new",
+      "colorHandle": "regular",
+      "preferences": [
+       "Chef's Choice",
+       "Veggie",
+       "Fit & Wholesome",
+       "Family Friendly",
+       "Quick & Easy",
+       "Pork Free",
+       "Pescatarian",
+       "Meat & Veggie",
+       "Family Faves",
+       "Nutrish & Delish",
+       "Mediterranean",
+       "Calorie Smart",
+       "Gut & Brain",
+       "Plant Based",
+       "Delicious Discoveries",
+       "Protein Packed",
+       "Keto",
+       "Vegetarian",
+       "Gluten Free",
+       "Vegan",
+       "Keto - shellfish-free",
+       "Keto - pork-free",
+       "Keto - fish-free",
+       "Keto - beef-free",
+       "Keto - meat only",
+       "Omnivore",
+       "Meat",
+       "Fish-free",
+       "Shellfish-free",
+       "Beef-free",
+       "Smart & Fit",
+       "chefschoice",
+       "veggie",
+       "fit",
+       "family",
+       "quick",
+       "porkfree",
+       "pescatarian"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Gluten-Free Friendly",
+      "type": "gluten-free-friendly",
+      "displayLabel": true
+     },
+     {
+      "name": "Low Added Sugar",
+      "type": "low-sugar",
+      "colorHandle": "calorieSmart",
+      "displayLabel": true
+     },
+     {
+      "name": "Easy Prep",
+      "type": "easy-prep",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Quick",
+      "type": "quick",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "dinner-bowls",
+      "type": "dinner-bowls",
+      "displayLabel": false
+     },
+     {
+      "name": "world-flavors",
+      "type": "world-flavors",
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Spanish",
+      "type": "spanish"
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 67,
+   "selection": {
+    "limit": 2,
+    "quantity": 1
+   },
+   "recipe": {
+    "id": "6aa7ffd387970cc2cf3bf1f9",
+    "name": "Pesto Shrimp Linguine with Lemony Panko Topping",
+    "headline": "Balances protein and fiber while limiting fat, sodium, and added sugar",
+    "prepTime": "PT20M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/pesto-shrimp-linguine-with-lemony-panko-topping-6aa7ffd387970cc2cf3bf1f9",
+    "label": {
+     "text": "GLP-1 Support",
+     "handle": "glp-1-friendly",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#CE4500",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "New",
+      "type": "new",
+      "colorHandle": "regular",
+      "preferences": [
+       "Chef's Choice",
+       "Veggie",
+       "Fit & Wholesome",
+       "Family Friendly",
+       "Quick & Easy",
+       "Pork Free",
+       "Pescatarian",
+       "Meat & Veggie",
+       "Family Faves",
+       "Nutrish & Delish",
+       "Mediterranean",
+       "Calorie Smart",
+       "Gut & Brain",
+       "Plant Based",
+       "Delicious Discoveries",
+       "Protein Packed",
+       "Keto",
+       "Vegetarian",
+       "Gluten Free",
+       "Vegan",
+       "Keto - shellfish-free",
+       "Keto - pork-free",
+       "Keto - fish-free",
+       "Keto - beef-free",
+       "Keto - meat only",
+       "Omnivore",
+       "Meat",
+       "Fish-free",
+       "Shellfish-free",
+       "Beef-free",
+       "Smart & Fit",
+       "chefschoice",
+       "veggie",
+       "fit",
+       "family",
+       "quick",
+       "porkfree",
+       "pescatarian"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Under 650 Calories",
+      "type": "under-650-calories",
+      "colorHandle": "calorieSmart",
+      "displayLabel": false
+     },
+     {
+      "name": "High Fiber",
+      "type": "fiber-powered",
+      "displayLabel": true
+     },
+     {
+      "name": "Low Added Sugar",
+      "type": "low-sugar",
+      "colorHandle": "calorieSmart",
+      "displayLabel": true
+     },
+     {
+      "name": "Quick",
+      "type": "quick",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "pasta-noodles",
+      "type": "pasta-noodles",
+      "displayLabel": false
+     },
+     {
+      "name": "Mediterranean",
+      "type": "mediterranean-hf",
+      "colorHandle": "calorieSmart",
+      "preferences": [
+       "Fit & Wholesome",
+       "Pescatarian",
+       "fit",
+       "pescatarian"
+      ],
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Italian",
+      "type": "italian"
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 12,
+   "charge": {
+    "label": "+12.99/serving",
+    "unitAmount": 1299,
+    "totalAmount": 7794,
+    "reason": "premium",
+    "strategy": "per_meal"
+   },
+   "recipe": {
+    "id": "670d59c2dc533226ca9139b3",
+    "name": "Steak au Poivre & Garlic Herb Shrimp",
+    "headline": "with Garlic Bread & Lemony Green Beans",
+    "prepTime": "PT35M",
+    "totalTime": "PT5M",
+    "websiteURL": "https://www.hellofresh.com/recipes/steak-au-poivre-garlic-herb-shrimp-670d59c2dc533226ca9139b3",
+    "label": {
+     "text": "Premium Picks",
+     "handle": "premium-picks",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#333332",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Kid Friendly",
+      "type": "family-friendly",
+      "colorHandle": "familyFriendly",
+      "preferences": [
+       "Family Friendly",
+       "family"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Easy Prep",
+      "type": "easy-prep",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Classic Plates",
+      "type": "classic-plates",
+      "displayLabel": false
+     },
+     {
+      "name": "regional-specialty",
+      "type": "regional-specialty",
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "American"
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 81,
+   "recipe": {
+    "id": "67bd548c29e0dfdacc79802c",
+    "name": "Butternut Squash Farrotto",
+    "headline": "with Parmesan & Sage",
+    "prepTime": "PT40M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/butternut-squash-farrotto-67bd548c29e0dfdacc79802c",
+    "label": {
+     "text": "Festive Fare",
+     "handle": "festive-flavours",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#333332",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "festive-flavours",
+      "type": "festive-flavours",
+      "displayLabel": false
+     },
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Under 650 Calories",
+      "type": "under-650-calories",
+      "colorHandle": "calorieSmart",
+      "displayLabel": false
+     },
+     {
+      "name": "Veggie",
+      "type": "veggie",
+      "colorHandle": "veggie",
+      "preferences": [
+       "Vegetarian",
+       "VeggiePlate",
+       "Veggie",
+       "veggie"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "High Fiber",
+      "type": "fiber-powered",
+      "displayLabel": true
+     },
+     {
+      "name": "Low Added Sugar",
+      "type": "low-sugar",
+      "colorHandle": "calorieSmart",
+      "displayLabel": true
+     },
+     {
+      "name": "dinner-bowls",
+      "type": "dinner-bowls",
+      "displayLabel": false
+     },
+     {
+      "name": "regional-specialty",
+      "type": "regional-specialty",
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "American"
+     }
+    ],
+    "category": "Veggie"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 14,
+   "charge": {
+    "label": "+9.99/serving",
+    "unitAmount": 999,
+    "totalAmount": 5994,
+    "reason": "premium",
+    "strategy": "per_meal"
+   },
+   "recipe": {
+    "id": "69f0cb95299d7945555eb8c2",
+    "name": "Steak Salad with Blue Cheese & Griddled Onion",
+    "headline": "plus Heirloom Tomatoes, Croutons & Honey-Balsamic Dressing",
+    "prepTime": "PT20M",
+    "totalTime": "PT5M",
+    "websiteURL": "https://www.hellofresh.com/recipes/steak-salad-with-blue-cheese-and-griddled-onion-69f0cb95299d7945555eb8c2",
+    "label": {
+     "text": "Premium Picks",
+     "handle": "premium-picks",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#333332",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "healthyweeknightwins",
+      "type": "healthy-weeknight-wins",
+      "displayLabel": false
+     },
+     {
+      "name": "High Protein",
+      "type": "high-protein",
+      "preferences": [
+       "Fit & Wholesome",
+       "Veggie",
+       "Family Friendly",
+       "Quick & Easy",
+       "Pork Free",
+       "Pescatarian",
+       "fit",
+       "veggie",
+       "family",
+       "quick",
+       "porkfree",
+       "pescatarian"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Under 650 Calories",
+      "type": "under-650-calories",
+      "colorHandle": "calorieSmart",
+      "displayLabel": false
+     },
+     {
+      "name": "Sodium Smart",
+      "type": "low-sodium",
+      "colorHandle": "calorieSmart",
+      "preferences": [
+       "Fit & Wholesome",
+       "Calorie Smart",
+       "Chef's Choice",
+       "Keto",
+       "High Protein",
+       "Carb Conscious",
+       "GLP-1 Support",
+       "Fiber Filled",
+       "Vegan & Veggie",
+       "Flexitarian",
+       "Protein Plus (pork-free)",
+       "Protein Plus (non-spicy)",
+       "Calorie Smart (non-spicy)",
+       "Keto (non-spicy)",
+       "Calorie Smart (pork-free)",
+       "Chef's Choice (pork-free)",
+       "Chef's Choice (non-spicy)",
+       "fit",
+       "chefschoice"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Carb Conscious",
+      "type": "carb-conscious",
+      "preferences": [
+       "Fit & Wholesome",
+       "fit"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Easy Prep",
+      "type": "easy-prep",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Easy Cleanup",
+      "type": "easy-cleanup",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "EasyPlate",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Quick",
+      "type": "quick",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "soup-salad",
+      "type": "soup-salad",
+      "displayLabel": false
+     },
+     {
+      "name": "regional-specialty",
+      "type": "regional-specialty",
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "American"
+     }
+    ]
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 78,
+   "charge": {
+    "label": "+12.99/serving",
+    "unitAmount": 1299,
+    "totalAmount": 7794,
+    "reason": "premium",
+    "strategy": "per_meal"
+   },
+   "recipe": {
+    "id": "69ebc381b2918f341e7b7d1a",
+    "name": "Thai Lobster Coconut Curry",
+    "headline": "Bring elevated, restaurant-style flavors to your kitchen",
+    "prepTime": "PT30M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/thai-lobster-coconut-curry-69ebc381b2918f341e7b7d1a",
+    "label": {
+     "text": "Chef's Premium",
+     "handle": "chefs-finest",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#333332",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Gluten-Free Friendly",
+      "type": "gluten-free-friendly",
+      "displayLabel": true
+     },
+     {
+      "name": "dinner-bowls",
+      "type": "dinner-bowls",
+      "displayLabel": false
+     },
+     {
+      "name": "South/SoutheastAsian",
+      "type": "south-southeastasian",
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Thai",
+      "type": "thai"
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 71,
+   "selection": {
+    "limit": 2,
+    "quantity": 1
+   },
+   "recipe": {
+    "id": "6a50d4c1748b7cf792501852",
+    "name": "Chesapeake Tilapia & Corn Chowder",
+    "headline": "with Potatoes, Thyme & Old Bay Croutons",
+    "prepTime": "PT40M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/chesapeake-tilapia-and-corn-chowder-6a50d4c1748b7cf792501852",
+    "label": {
+     "text": "NEW",
+     "handle": "new",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#067A46",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "soup-salad",
+      "type": "soup-salad",
+      "displayLabel": false
+     },
+     {
+      "name": "regional-specialty",
+      "type": "regional-specialty",
+      "displayLabel": false
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 16,
+   "charge": {
+    "label": "+12.99/serving",
+    "unitAmount": 1299,
+    "totalAmount": 7794,
+    "reason": "premium",
+    "strategy": "per_meal"
+   },
+   "recipe": {
+    "id": "6995e1c224dac753f49989ee",
+    "name": "Cajun Crab Cakes with Linguine",
+    "headline": "plus Creamy Bell Pepper Sauce & Parmesan Garlic Bread",
+    "prepTime": "PT45M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/cajun-crab-cakes-with-linguine-6995e1c224dac753f49989ee",
+    "label": {
+     "text": "Premium Picks",
+     "handle": "premium-picks",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#333332",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "pasta-noodles",
+      "type": "pasta-noodles",
+      "displayLabel": false
+     },
+     {
+      "name": "regional-specialty",
+      "type": "regional-specialty",
+      "displayLabel": false
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 63,
+   "selection": {
+    "limit": 2
+   },
+   "recipe": {
+    "id": "68d65726681e58ed6e5b3d42",
+    "name": "Classic Tuna Melts",
+    "headline": "with Lemon Pepper Potato Wedges & Special Sauce",
+    "prepTime": "PT35M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/classic-tuna-melts-68d65726681e58ed6e5b3d42",
+    "tags": [
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "handhelds",
+      "type": "handhelds",
+      "displayLabel": false
+     },
+     {
+      "name": "regional-specialty",
+      "type": "regional-specialty",
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "American"
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 43,
+   "selection": {
+    "limit": 2
+   },
+   "recipe": {
+    "id": "69b83d95fff2efa4150e227c",
+    "name": "Prep & Bake Saucy Slaw Tilapia Sandos",
+    "headline": "Includes recyclable aluminum trays",
+    "prepTime": "PT45M",
+    "totalTime": "PT5M",
+    "websiteURL": "https://www.hellofresh.com/recipes/saucy-slaw-tilapia-sandos-69b83d95fff2efa4150e227c",
+    "label": {
+     "text": "PREP & BAKE",
+     "handle": "prep-and-bake",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#1A5DB6",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "High Fiber",
+      "type": "fiber-powered",
+      "displayLabel": true
+     },
+     {
+      "name": "Easy Prep",
+      "type": "easy-prep",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "handhelds",
+      "type": "handhelds",
+      "displayLabel": false
+     },
+     {
+      "name": "regional-specialty",
+      "type": "regional-specialty",
+      "displayLabel": false
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 53,
+   "selection": {
+    "limit": 2
+   },
+   "recipe": {
+    "id": "695c10b5725ffb771e095238",
+    "name": "Garlicky Shrimp Couscous Bowls",
+    "headline": "with Chili-Roasted Broccoli & Fresh Parsley",
+    "prepTime": "PT25M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/garlicky-shrimp-couscous-bowls-695c10b5725ffb771e095238",
+    "label": {
+     "text": "GLP-1 Support",
+     "handle": "glp-1-friendly",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#CE4500",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "Bestseller",
+      "type": "bestseller",
+      "colorHandle": "familyFriendly",
+      "displayLabel": false
+     },
+     {
+      "name": "no-kid-hungry",
+      "type": "no-kid-hungry",
+      "displayLabel": false
+     },
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Under 650 Calories",
+      "type": "under-650-calories",
+      "colorHandle": "calorieSmart",
+      "displayLabel": false
+     },
+     {
+      "name": "High Fiber",
+      "type": "fiber-powered",
+      "displayLabel": true
+     },
+     {
+      "name": "Low Added Sugar",
+      "type": "low-sugar",
+      "colorHandle": "calorieSmart",
+      "displayLabel": true
+     },
+     {
+      "name": "Kid Friendly",
+      "type": "family-friendly",
+      "colorHandle": "familyFriendly",
+      "preferences": [
+       "Family Friendly",
+       "family"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "pasta-noodles",
+      "type": "pasta-noodles",
+      "displayLabel": false
+     },
+     {
+      "name": "Mediterranean",
+      "type": "mediterranean-hf",
+      "colorHandle": "calorieSmart",
+      "preferences": [
+       "Fit & Wholesome",
+       "Pescatarian",
+       "fit",
+       "pescatarian"
+      ],
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Italian",
+      "type": "italian"
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 558,
+   "recipe": {
+    "id": "6ab563fb7b08fde232914e22",
+    "name": "Pesto Salmon Linguine with Spinach",
+    "headline": "plus Lemony Panko Topping",
+    "prepTime": "PT20M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/pesto-salmon-linguine-with-spinach-6ab563fb7b08fde232914e22",
+    "tags": [
+     {
+      "name": "New",
+      "type": "new",
+      "colorHandle": "regular",
+      "preferences": [
+       "Chef's Choice",
+       "Veggie",
+       "Fit & Wholesome",
+       "Family Friendly",
+       "Quick & Easy",
+       "Pork Free",
+       "Pescatarian",
+       "Meat & Veggie",
+       "Family Faves",
+       "Nutrish & Delish",
+       "Mediterranean",
+       "Calorie Smart",
+       "Gut & Brain",
+       "Plant Based",
+       "Delicious Discoveries",
+       "Protein Packed",
+       "Keto",
+       "Vegetarian",
+       "Gluten Free",
+       "Vegan",
+       "Keto - shellfish-free",
+       "Keto - pork-free",
+       "Keto - fish-free",
+       "Keto - beef-free",
+       "Keto - meat only",
+       "Omnivore",
+       "Meat",
+       "Fish-free",
+       "Shellfish-free",
+       "Beef-free",
+       "Smart & Fit",
+       "chefschoice",
+       "veggie",
+       "fit",
+       "family",
+       "quick",
+       "porkfree",
+       "pescatarian"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Sodium Smart",
+      "type": "low-sodium",
+      "colorHandle": "calorieSmart",
+      "preferences": [
+       "Fit & Wholesome",
+       "Calorie Smart",
+       "Chef's Choice",
+       "Keto",
+       "High Protein",
+       "Carb Conscious",
+       "GLP-1 Support",
+       "Fiber Filled",
+       "Vegan & Veggie",
+       "Flexitarian",
+       "Protein Plus (pork-free)",
+       "Protein Plus (non-spicy)",
+       "Calorie Smart (non-spicy)",
+       "Keto (non-spicy)",
+       "Calorie Smart (pork-free)",
+       "Chef's Choice (pork-free)",
+       "Chef's Choice (non-spicy)",
+       "fit",
+       "chefschoice"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Low Added Sugar",
+      "type": "low-sugar",
+      "colorHandle": "calorieSmart",
+      "displayLabel": true
+     },
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Quick",
+      "type": "quick",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "pasta-noodles",
+      "type": "pasta-noodles",
+      "displayLabel": false
+     },
+     {
+      "name": "Mediterranean",
+      "type": "mediterranean-hf",
+      "colorHandle": "calorieSmart",
+      "preferences": [
+       "Fit & Wholesome",
+       "Pescatarian",
+       "fit",
+       "pescatarian"
+      ],
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Italian",
+      "type": "italian"
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 560,
+   "charge": {
+    "label": "+4.99/serving",
+    "unitAmount": 499,
+    "totalAmount": 2994,
+    "reason": "premium",
+    "strategy": "per_meal"
+   },
+   "recipe": {
+    "id": "6ab562a17b08fde232914bee",
+    "name": "Pesto 2x Shrimp Linguine with Lemony Panko Topping",
+    "headline": "plus Spinach & Scallions",
+    "prepTime": "PT20M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/pesto-2x-shrimp-linguine-with-lemony-panko-topping-6ab562a17b08fde232914bee",
+    "tags": [
+     {
+      "name": "New",
+      "type": "new",
+      "colorHandle": "regular",
+      "preferences": [
+       "Chef's Choice",
+       "Veggie",
+       "Fit & Wholesome",
+       "Family Friendly",
+       "Quick & Easy",
+       "Pork Free",
+       "Pescatarian",
+       "Meat & Veggie",
+       "Family Faves",
+       "Nutrish & Delish",
+       "Mediterranean",
+       "Calorie Smart",
+       "Gut & Brain",
+       "Plant Based",
+       "Delicious Discoveries",
+       "Protein Packed",
+       "Keto",
+       "Vegetarian",
+       "Gluten Free",
+       "Vegan",
+       "Keto - shellfish-free",
+       "Keto - pork-free",
+       "Keto - fish-free",
+       "Keto - beef-free",
+       "Keto - meat only",
+       "Omnivore",
+       "Meat",
+       "Fish-free",
+       "Shellfish-free",
+       "Beef-free",
+       "Smart & Fit",
+       "chefschoice",
+       "veggie",
+       "fit",
+       "family",
+       "quick",
+       "porkfree",
+       "pescatarian"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Low Added Sugar",
+      "type": "low-sugar",
+      "colorHandle": "calorieSmart",
+      "displayLabel": true
+     },
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Quick",
+      "type": "quick",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "double-protein",
+      "type": "double-protein",
+      "displayLabel": false
+     },
+     {
+      "name": "pasta-noodles",
+      "type": "pasta-noodles",
+      "displayLabel": false
+     },
+     {
+      "name": "Mediterranean",
+      "type": "mediterranean-hf",
+      "colorHandle": "calorieSmart",
+      "preferences": [
+       "Fit & Wholesome",
+       "Pescatarian",
+       "fit",
+       "pescatarian"
+      ],
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Italian",
+      "type": "italian"
+     }
+    ],
+    "category": "Seafood"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 565,
+   "recipe": {
+    "id": "6ab563fb7b08fde232914e24",
+    "name": "Pesto Chicken Linguine with Spinach",
+    "headline": "plus Lemony Panko Topping",
+    "prepTime": "PT20M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/pesto-chicken-linguine-with-spinach-6ab563fb7b08fde232914e24",
+    "tags": [
+     {
+      "name": "New",
+      "type": "new",
+      "colorHandle": "regular",
+      "preferences": [
+       "Chef's Choice",
+       "Veggie",
+       "Fit & Wholesome",
+       "Family Friendly",
+       "Quick & Easy",
+       "Pork Free",
+       "Pescatarian",
+       "Meat & Veggie",
+       "Family Faves",
+       "Nutrish & Delish",
+       "Mediterranean",
+       "Calorie Smart",
+       "Gut & Brain",
+       "Plant Based",
+       "Delicious Discoveries",
+       "Protein Packed",
+       "Keto",
+       "Vegetarian",
+       "Gluten Free",
+       "Vegan",
+       "Keto - shellfish-free",
+       "Keto - pork-free",
+       "Keto - fish-free",
+       "Keto - beef-free",
+       "Keto - meat only",
+       "Omnivore",
+       "Meat",
+       "Fish-free",
+       "Shellfish-free",
+       "Beef-free",
+       "Smart & Fit",
+       "chefschoice",
+       "veggie",
+       "fit",
+       "family",
+       "quick",
+       "porkfree",
+       "pescatarian"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Sodium Smart",
+      "type": "low-sodium",
+      "colorHandle": "calorieSmart",
+      "preferences": [
+       "Fit & Wholesome",
+       "Calorie Smart",
+       "Chef's Choice",
+       "Keto",
+       "High Protein",
+       "Carb Conscious",
+       "GLP-1 Support",
+       "Fiber Filled",
+       "Vegan & Veggie",
+       "Flexitarian",
+       "Protein Plus (pork-free)",
+       "Protein Plus (non-spicy)",
+       "Calorie Smart (non-spicy)",
+       "Keto (non-spicy)",
+       "Calorie Smart (pork-free)",
+       "Chef's Choice (pork-free)",
+       "Chef's Choice (non-spicy)",
+       "fit",
+       "chefschoice"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "High Fiber",
+      "type": "fiber-powered",
+      "displayLabel": true
+     },
+     {
+      "name": "Low Added Sugar",
+      "type": "low-sugar",
+      "colorHandle": "calorieSmart",
+      "displayLabel": true
+     },
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Quick",
+      "type": "quick",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "pasta-noodles",
+      "type": "pasta-noodles",
+      "displayLabel": false
+     },
+     {
+      "name": "Mediterranean",
+      "type": "mediterranean-hf",
+      "colorHandle": "calorieSmart",
+      "preferences": [
+       "Fit & Wholesome",
+       "Pescatarian",
+       "fit",
+       "pescatarian"
+      ],
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Italian",
+      "type": "italian"
+     }
+    ],
+    "category": "Poultry"
+   }
+  },
+  {
+   "recipeFamily": "classic-menu",
+   "index": 567,
+   "charge": {
+    "label": "+11.99/serving",
+    "unitAmount": 1199,
+    "totalAmount": 7194,
+    "reason": "premium",
+    "strategy": "per_meal"
+   },
+   "recipe": {
+    "id": "6ab5646b7b08fde232914f0e",
+    "name": "Pesto Lobster Tail & Spinach Linguine",
+    "headline": "Balances protein and fiber while limiting fat, sodium, and added sugar",
+    "prepTime": "PT20M",
+    "totalTime": "PT10M",
+    "websiteURL": "https://www.hellofresh.com/recipes/pesto-lobster-tail-and-spinach-linguine-6ab5646b7b08fde232914f0e",
+    "label": {
+     "text": "GLP-1 Support",
+     "handle": "glp-1-friendly",
+     "foregroundColor": "#FFFFFF",
+     "backgroundColor": "#CE4500",
+     "displayLabel": true
+    },
+    "tags": [
+     {
+      "name": "New",
+      "type": "new",
+      "colorHandle": "regular",
+      "preferences": [
+       "Chef's Choice",
+       "Veggie",
+       "Fit & Wholesome",
+       "Family Friendly",
+       "Quick & Easy",
+       "Pork Free",
+       "Pescatarian",
+       "Meat & Veggie",
+       "Family Faves",
+       "Nutrish & Delish",
+       "Mediterranean",
+       "Calorie Smart",
+       "Gut & Brain",
+       "Plant Based",
+       "Delicious Discoveries",
+       "Protein Packed",
+       "Keto",
+       "Vegetarian",
+       "Gluten Free",
+       "Vegan",
+       "Keto - shellfish-free",
+       "Keto - pork-free",
+       "Keto - fish-free",
+       "Keto - beef-free",
+       "Keto - meat only",
+       "Omnivore",
+       "Meat",
+       "Fish-free",
+       "Shellfish-free",
+       "Beef-free",
+       "Smart & Fit",
+       "chefschoice",
+       "veggie",
+       "fit",
+       "family",
+       "quick",
+       "porkfree",
+       "pescatarian"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "Under 650 Calories",
+      "type": "under-650-calories",
+      "colorHandle": "calorieSmart",
+      "displayLabel": false
+     },
+     {
+      "name": "High Fiber",
+      "type": "fiber-powered",
+      "displayLabel": true
+     },
+     {
+      "name": "Low Added Sugar",
+      "type": "low-sugar",
+      "colorHandle": "calorieSmart",
+      "displayLabel": true
+     },
+     {
+      "name": "Pork-free",
+      "type": "pork-free",
+      "displayLabel": false
+     },
+     {
+      "name": "Quick",
+      "type": "quick",
+      "colorHandle": "quickPrep",
+      "preferences": [
+       "Quick & Easy",
+       "quick"
+      ],
+      "displayLabel": true
+     },
+     {
+      "name": "pasta-noodles",
+      "type": "pasta-noodles",
+      "displayLabel": false
+     },
+     {
+      "name": "Mediterranean",
+      "type": "mediterranean-hf",
+      "colorHandle": "calorieSmart",
+      "preferences": [
+       "Fit & Wholesome",
+       "Pescatarian",
+       "fit",
+       "pescatarian"
+      ],
+      "displayLabel": false
+     }
+    ],
+    "cuisines": [
+     {
+      "name": "Italian",
+      "type": "italian"
+     }
+    ],
+    "category": "Seafood"
+   }
+  }
+ ],
+ "mealsReady": true,
+ "addOns": {
+  "selectionLimit": 100,
+  "groups": []
+ },
+ "modularity": [
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "No Customization",
+   "defaultCourseIndex": 1,
+   "defaultCategory": "Poultry",
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "Ground Beef",
+   "defaultCourseIndex": 2,
+   "defaultCategory": "Beef",
+   "defaultIngredient": {
+    "name": "Ground Beef",
+    "imageURL": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/64b6744ca1aa6db20ea0d43f-cdb37acd.png",
+    "amount": 30,
+    "unit": "ounce",
+    "imageUrl": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/64b6744ca1aa6db20ea0d43f-cdb37acd.png"
+   },
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "No Customization",
+   "defaultCourseIndex": 12,
+   "defaultCategory": "Seafood",
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "Shrimp",
+   "defaultCourseIndex": 13,
+   "defaultCategory": "Seafood",
+   "defaultIngredient": {
+    "name": "Shrimp",
+    "imageURL": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/696fc1e7384e652ce6a4ba1d-9d081bf6.png",
+    "amount": 30,
+    "unit": "ounce",
+    "imageUrl": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/696fc1e7384e652ce6a4ba1d-9d081bf6.png"
+   },
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "Crab Cakes",
+   "defaultCourseIndex": 16,
+   "defaultCategory": "Seafood",
+   "defaultIngredient": {
+    "name": "Crab Cakes",
+    "imageURL": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/690b60ec79e2c370e491e464-45aa757e.png",
+    "amount": 24,
+    "unit": "ounce",
+    "imageUrl": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/690b60ec79e2c370e491e464-45aa757e.png"
+   },
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "Salmon",
+   "defaultCourseIndex": 30,
+   "defaultCategory": "Seafood",
+   "defaultIngredient": {
+    "name": "Salmon",
+    "imageURL": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/68d57e85d232ff05cfc441e8-f7e339d4.png",
+    "amount": 30,
+    "unit": "ounce",
+    "imageUrl": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/68d57e85d232ff05cfc441e8-f7e339d4.png"
+   },
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "Tilapia",
+   "defaultCourseIndex": 43,
+   "defaultCategory": "Seafood",
+   "defaultIngredient": {
+    "name": "Tilapia",
+    "imageURL": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/64b6744fa7c1f8a1e13bad23-7dd86625.png",
+    "amount": 33,
+    "unit": "ounce",
+    "imageUrl": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/64b6744fa7c1f8a1e13bad23-7dd86625.png"
+   },
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "Chilean Sea Bass",
+   "defaultCourseIndex": 47,
+   "defaultCategory": "Seafood",
+   "defaultIngredient": {
+    "name": "Chilean Sea Bass",
+    "imageURL": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/68d655c9681e58ed6e5b352a-633df721.png",
+    "amount": 30,
+    "unit": "ounce",
+    "imageUrl": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/68d655c9681e58ed6e5b352a-633df721.png"
+   },
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "No Customization",
+   "defaultCourseIndex": 53,
+   "defaultCategory": "Seafood",
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "Shrimp",
+   "defaultCourseIndex": 67,
+   "defaultCategory": "Seafood",
+   "defaultIngredient": {
+    "name": "Shrimp",
+    "imageURL": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/696fc1e7384e652ce6a4ba1d-9d081bf6.png",
+    "amount": 30,
+    "unit": "ounce",
+    "imageUrl": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/696fc1e7384e652ce6a4ba1d-9d081bf6.png"
+   },
+   "addOns": [],
+   "variations": [
+    {
+     "index": 560,
+     "title": "2x Shrimp",
+     "category": "Seafood"
+    },
+    {
+     "index": 558,
+     "title": "Salmon",
+     "category": "Seafood"
+    },
+    {
+     "index": 565,
+     "title": "Chopped Chicken Breast",
+     "category": "Poultry"
+    },
+    {
+     "index": 567,
+     "title": "Lobster Tails",
+     "category": "Seafood"
+    }
+   ]
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "Tilapia",
+   "defaultCourseIndex": 71,
+   "defaultCategory": "Seafood",
+   "defaultIngredient": {
+    "name": "Tilapia",
+    "imageURL": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/64b6744fa7c1f8a1e13bad23-7dd86625.png",
+    "amount": 33,
+    "unit": "ounce",
+    "imageUrl": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/64b6744fa7c1f8a1e13bad23-7dd86625.png"
+   },
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "Lobster Tails",
+   "defaultCourseIndex": 78,
+   "defaultCategory": "Seafood",
+   "defaultIngredient": {
+    "name": "Lobster Tails",
+    "imageURL": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/5eb2bf123eccf839f854b2b2-c710b761.jpg",
+    "amount": 24,
+    "unit": "ounce",
+    "imageUrl": "https://d3hvwccx09j84u.cloudfront.net/200,200/ingredient/5eb2bf123eccf839f854b2b2-c710b761.jpg"
+   },
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "noVariationsDefaultTitle": "No Customization",
+   "defaultCourseIndex": 81,
+   "defaultCategory": "Veggie",
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "defaultCourseIndex": 558,
+   "defaultCategory": "Seafood",
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "defaultCourseIndex": 560,
+   "defaultCategory": "Seafood",
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "defaultCourseIndex": 565,
+   "defaultCategory": "Poultry",
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "defaultCourseIndex": 567,
+   "defaultCategory": "Seafood",
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "defaultCourseIndex": 14,
+   "addOns": [],
+   "variations": []
+  },
+  {
+   "variationsHeadline": "",
+   "defaultCourseIndex": 63,
+   "defaultCategory": "Seafood",
+   "addOns": [],
+   "variations": []
+  }
+ ],
+ "menuCollections": []
+}
