@@ -33,6 +33,7 @@ import {
   compactSelection,
   dateOf,
   estimateFor,
+  isUnresizableFirstBox,
   loadAccount,
   nextBoxNumberParam,
   readMenu,
@@ -266,7 +267,8 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
         'one read: the box size the week needs versus what it has, suggested picks with alternates, the estimated ' +
         'box total with the voucher discount (and a warning when the voucher stops applying), a one-line summary ' +
         'for the user to approve, and the exact follow-up write calls (hf_unskip_week, hf_set_week_size, ' +
-        'hf_select_meals) in order. Read-only: it changes nothing.',
+        'hf_select_meals) in order. The subscription’s first box cannot be resized, so for it no size change is ' +
+        'proposed (notes say so). Read-only: it changes nothing.',
       annotations: readOnly('HelloFresh: weekly plan'),
       _meta: foodMeta('other', { aliases: ['plan hellofresh week', 'weekly meal plan', 'hellofresh plan this week'] }),
       inputSchema: z.object({
@@ -288,9 +290,21 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
       const [raw, list] = await Promise.all([client.getDelivery(account.subscriptionId, week), client.listDeliveries()]);
       const delivery = projectDelivery(raw);
       const upcoming = (list.items ?? []).map(projectDelivery);
-      const { menu, suggestion, recent } = await plan(client, account, delivery, profile, args);
+      // The first box cannot be resized (a HelloFresh rule): plan for the box as it is, and say so.
+      const wanted = profileSku(profile, args.people ?? profile.people);
+      const firstBoxFixed = isUnresizableFirstBox(account.subscription, week) && !!delivery.sku && !!delivery.servings && !!delivery.meals;
+      const firstBoxDiffers = firstBoxFixed && delivery.sku !== wanted;
+      const planProfile = firstBoxDiffers ? { ...profile, meals: delivery.meals! } : profile;
+      const planArgs = firstBoxDiffers ? { ...args, people: delivery.servings as SuggestArgs['people'] } : args;
+      const { menu, suggestion, recent } = await plan(client, account, delivery, planProfile, planArgs);
       const { picks, people } = suggestion;
-      const sku = profileSku(profile, people);
+      const sku = firstBoxDiffers ? delivery.sku! : profileSku(profile, people);
+      const notes = firstBoxDiffers
+        ? [
+            `${week} is the first box of this subscription, which HelloFresh says cannot be resized: it keeps ` +
+              `${delivery.sku} (the ${profile.name} profile would want ${wanted}), so the picks and estimate are for it as it is.`,
+          ]
+        : [];
 
       const sizeChangeNeeded = delivery.sku !== sku;
       const skipped = delivery.status === 'skipped';
@@ -355,6 +369,7 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
         summary: summaryText({ profile, people, deliveryDate: delivery.deliveryDate, picks, estimate }),
         ...(locked ? { locked } : {}),
         ...(alreadyPicked ? { note: 'The suggested meals are already picked for this week; nothing to change.' } : {}),
+        ...(notes.length > 0 ? { notes } : {}),
         followUp,
         ...(followUp.length > 0
           ? {

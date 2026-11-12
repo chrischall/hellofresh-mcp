@@ -109,6 +109,8 @@ One box a week. For the next week still before its cutoff:
 4. Make the changes it listed, in order, each confirmation-gated:
    `hf_unskip_week` if the week is skipped, `hf_set_week_size` if the size must
    change (picks may reset — pick after), then `hf_select_meals` `{week, meals}`.
+   For the subscription's first box no resize is offered (HelloFresh won't
+   resize it): `notes` says it keeps its size, and the picks fit it as it is.
 5. Report each write's `status`.
 
 **Monday reminder.** Deliveries are on Mondays and the cutoff is about five days
@@ -122,11 +124,15 @@ ever explicit — never skip a week the user didn't ask to skip.
 - `hf_select_meals` — the COMPLETE pick list for a week (replaces the current
   picks); the count must equal the box's meals.
 - `hf_set_week_size` — ONE week's people (and optionally meals), keeping its
-  delivery day.
+  delivery day. Picks may reset — pick after. The subscription's FIRST box
+  cannot be resized (HelloFresh rule); the tool refuses it.
 - `hf_set_week_delivery_day` — ONE week to another offered day (a slot from
   `hf_get_delivery`'s `oneOffDaySlots`).
 - `hf_skip_week` / `hf_unskip_week` — before the cutoff only.
-- `hf_change_plan_size` — the plan's permanent box size.
+- `hf_change_plan_size` — the plan's permanent box size. It RESETS every
+  one-week size set with `hf_set_week_size` back to the new plan size: show the
+  preview's `overriddenWeeks` to the user, and afterwards re-apply any listed
+  in `overridesReverted` that they want to keep.
 - `hf_change_delivery_schedule` — the plan's permanent day/slot and frequency
   (every 1–4 weeks).
 

@@ -69,6 +69,14 @@ export async function loadAccount(client: HelloFreshClient): Promise<Account> {
   return { subscription, subscriptionId: subscription.id };
 }
 
+/** Wait `ms` milliseconds (the default ToolDeps.sleep). */
+export const sleepMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Whether `week` is the subscription's first box, not yet delivered — HelloFresh will not resize it. */
+export function isUnresizableFirstBox(subscription: Pick<RawSubscription, 'firstDeliveryWeek' | 'firstBoxDelivered'>, week: string): boolean {
+  return subscription.firstBoxDelivered === false && subscription.firstDeliveryWeek === week;
+}
+
 /** The customer plan id the menu read needs: the subscription's, else the plan whose legacy id matches. */
 export async function customerPlanIdOf(client: HelloFreshClient, account: Account): Promise<string> {
   if (account.subscription.customerPlanId) return account.subscription.customerPlanId;

@@ -72,6 +72,8 @@ interface RequestOptions {
   body?: unknown;
   /** The path as named in errors, ids replaced by placeholders (subscription/plan ids are never echoed). */
   route?: string;
+  /** Accept any 2xx body (empty, text or JSON) and return undefined — an edge page is still refused. */
+  discardBody?: boolean;
 }
 
 export interface DeliveryMenuQuery {
@@ -104,9 +106,17 @@ export interface DeliveryStatusRequest {
   status: 'PAUSED' | 'RUNNING';
 }
 
+export interface WeekSizeRequest {
+  subscriptionId: string;
+  week: string;
+  /** The new box handle, `US-CBU-{meals}-{people}-0`. */
+  sku: string;
+}
+
 export interface OneOffRequest {
   subscriptionId: string;
   week: string;
+  /** The week's CURRENT box handle: a different one is silently ignored (size changes go through setWeekSize). */
   sku: string;
   deliveryOption: string;
 }
@@ -179,7 +189,7 @@ export class HelloFreshClient {
     });
   }
 
-  // ---- writes (docs/HELLOFRESH-API.md "Writes" 1–5) -------------------------
+  // ---- writes (docs/HELLOFRESH-API.md "Writes" 1–5, 3 split into 3a size / 3b day) -------------------------
   // Each write is built by an exported pure builder (below), so the confirm
   // preview of a write and the request actually sent are the same object.
 
@@ -193,7 +203,12 @@ export class HelloFreshClient {
     return this.send(deliveryStatusRequest(r));
   }
 
-  /** Write 3: one week's box size (`sku`) and/or delivery slot (`deliveryOption`). */
+  /** Write 3a: one week's box size. Any 2xx is success (the body may be empty or not JSON). */
+  async setWeekSize(r: WeekSizeRequest): Promise<void> {
+    await this.send(weekSizeRequest(r), { discardBody: true });
+  }
+
+  /** Write 3b: one week's delivery slot (`deliveryOption`). Does NOT change the size: a new `sku` is ignored. */
   changeOneOff(r: OneOffRequest): Promise<ListOf<RawDelivery>> {
     return this.send(oneOffRequest(r));
   }
@@ -208,8 +223,8 @@ export class HelloFreshClient {
     await this.send(planDeliveryDetailsRequest(customerPlanId, details));
   }
 
-  private send<T>(w: WriteRequest): Promise<T> {
-    return this.request(w.method, w.path, { locale: false, query: w.query, body: w.body, route: w.route });
+  private send<T>(w: WriteRequest, opts: Pick<RequestOptions, 'discardBody'> = {}): Promise<T> {
+    return this.request(w.method, w.path, { locale: false, query: w.query, body: w.body, route: w.route, ...opts });
   }
 
   // ---- the one request -------------------------------------------------------
@@ -259,6 +274,11 @@ export class HelloFreshClient {
         kind: rejected ? 'credential_rejected' : 'http',
         ...(res.status === 401 ? { hint: signInHint() } : {}),
       });
+    }
+    if (opts.discardBody) {
+      const edge = detectEdgeBlock({ status: res.status, headers: res.headers, body: text });
+      if (edge) throw new EdgeBlockedError(res.status, edge.vendor, where);
+      return undefined as T;
     }
     return parseJsonBody<T>(text, { ...where, status: res.status, headers: res.headers });
   }
@@ -329,6 +349,16 @@ export function deliveryStatusRequest(r: DeliveryStatusRequest): WriteRequest {
         status: r.status,
       },
     },
+  };
+}
+
+export function weekSizeRequest(r: WeekSizeRequest): WriteRequest {
+  return {
+    method: 'PUT',
+    path: apiPath`/carts/${r.week}/size`,
+    route: `/carts/${r.week}/size`,
+    query: { ...LOCALE_QUERY, subscription: r.subscriptionId },
+    body: { productHandle: r.sku, hfMarketCode: COUNTRY },
   };
 }
 

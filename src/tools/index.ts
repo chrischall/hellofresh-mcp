@@ -23,6 +23,8 @@ export interface ToolDeps {
   client: HelloFreshClient;
   /** The clock (epoch ms) — "this week" for hf_recent_picks, the cutoff check for writes. Defaults to Date.now. */
   now?: () => number;
+  /** Wait `ms` (the re-read back-off after a write). Defaults to a timer; tests pass a no-op. */
+  sleep?: (ms: number) => Promise<void>;
   /** The planner profiles (loaded once, on first use). Defaults to a store over the env / profiles file / built-ins. */
   profiles?: () => LoadedProfiles;
 }

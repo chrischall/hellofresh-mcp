@@ -116,7 +116,7 @@
     },
     {
       "name": "hf_set_week_size",
-      "description": "Change one week's box size (people, optionally meals) only, keeping its delivery day; confirm-gated and verified."
+      "description": "Change one week's box size (people, optionally meals) only, keeping its delivery day (not the first box); confirm-gated and verified."
     },
     {
       "name": "hf_set_week_delivery_day",
@@ -132,7 +132,7 @@
     },
     {
       "name": "hf_change_plan_size",
-      "description": "Permanently change the plan's box size (meals x people); confirm-gated and verified by re-reading the plan."
+      "description": "Permanently change the plan's box size (meals x people); resets one-week sizes, which it lists; confirm-gated and verified."
     },
     {
       "name": "hf_change_delivery_schedule",

@@ -86,7 +86,7 @@ shipping/billing address, payment token — NEVER return those unprojected.
 
 ## Writes
 
-Writes 1–5 VERIFIED live on 2026-11-12 with idempotent re-saves (same values), each followed by a re-read confirming no change.
+Writes 1–5 VERIFIED live on 2026-11-12: 1, 2 and 5 with idempotent re-saves (same values), each followed by a re-read confirming no change; 3a, 3b and 4 with real changes (see each).
 
 1. **Select meals for a week** — `PUT /v1/carts/{week}?subscription={id}&customer={customer.id (int)}&week={week}&product-sku={sku}&preference={subscription.preset}&update_quantity=false&ignore_addons=false`
    body `{"extras": [], "meals": [{"index": 67, "quantity": 1}, {"index": 71, "quantity": 1}]}`
@@ -96,17 +96,34 @@ Writes 1–5 VERIFIED live on 2026-11-12 with idempotent re-saves (same values),
 2. **Skip / unskip a week** — `PATCH /api/subscriptions/{id}/delivery_dates/{week}?country=US&locale=en-US`
    body `{"delivery": {"id": "{week}", "subscriptionId": "{id}", "deliveryDate": "<from delivery>", "cutoffDate": "<from delivery>", "status": "PAUSED"}}`
    (`"RUNNING"` = unskip) → 201 `{count, items:[Delivery]}`.
-3. **Change size / day for ONE week (one-off)** — `POST /api/subscriptions/{id}/oneoff?country=US&locale=en-US`
-   body `{"id": "{id}", "week": "{week}", "sku": "US-CBU-2-2-0", "delivery_option": "US-1-0800-2000", "source": "one-off"}`
-   → 201 `{count, items:[Delivery]}`. Changing `sku` changes that week's box size;
-   changing `delivery_option` to one of `availableOneOffOptions[].handle` moves that week's day.
-   (A one-week size change earlier in the session took W50 from US-CBU-2-6-0 $147.48 to US-CBU-2-2-0 $59.96.)
-   After a size change re-read the menu with the new `servings`/`product-sku` — selections may be reset.
+3. **ONE week's box size and delivery day** — two different endpoints (corrected 2026-11-12):
+
+   3a. **Box size for ONE week** — `PUT /carts/{week}/size?country=US&locale=en-US&subscription={id}`
+   (under `/gw`, NOT `/gw/v1`), headers `Content-Type: application/json` + `Authorization: Bearer`,
+   body `{"productHandle": "US-CBU-{meals}-{people}-0", "hfMarketCode": "US"}` (the site also sends an
+   optional `"source"`; omit it) → 2xx; treat the body as possibly empty / not JSON. VERIFIED live
+   (captured from the site's own request; it changed a week 2×6 → 2×2 and the re-read delivery showed
+   `product.handle` `US-CBU-2-2-0`). Verify by re-reading `GET …/delivery_dates/{week}` → `product.handle`
+   (re-read a few times, ~1.5 s apart, before calling it unverified). After a size change re-read the menu
+   with the new `servings`/`product-sku` — selections may be reset.
+   **First box rule:** the subscription's first box cannot be resized (a HelloFresh rule) — refuse when
+   `week === subscription.firstDeliveryWeek` and `firstBoxDelivered === false`, without sending anything.
+
+   3b. **Delivery day for ONE week (one-off)** — `POST /api/subscriptions/{id}/oneoff?country=US&locale=en-US`
+   body `{"id": "{id}", "week": "{week}", "sku": "<the week's CURRENT product.handle>", "delivery_option": "US-2-0800-2000", "source": "one-off"}`
+   → 201 `{count, items:[Delivery]}`. Changing `delivery_option` to one of `availableOneOffOptions[].handle`
+   moves that week's day: VERIFIED end-to-end through `hf_set_week_delivery_day` (Mon → Tue → Mon, each
+   re-read showing the new slot). **Do NOT use it to change the size:** a different `sku` answers 201 but is
+   silently IGNORED (VERIFIED — the week kept its size). Use 3a for size.
 
 4. **Permanent box size** — `PATCH /api/plans/{customerPlanId}?country=US&locale=en-US`
-   body `{"productHandle": "US-CBU-2-6-0"}` → 204 (no body). VERIFIED (same-value re-save; week-only
-   one-off overrides such as a 2-person week and existing meal picks SURVIVED). Verify by re-reading
+   body `{"productHandle": "US-CBU-2-6-0"}` → 204 (no body). VERIFIED. Verify by re-reading
    `GET /api/plans` → `planItems[0].productHandle`.
+   **A real size change RESETS week-only size overrides** (VERIFIED: a week set to 2×2 via 3a reverted to
+   the plan size after the plan went 2×6 → 2×4 → 2×6). Only a same-value re-save leaves them (and meal
+   picks) alone. Before changing it, list the upcoming running weeks whose `product.handle` differs from
+   the plan's; afterwards re-read `GET /api/customers/me/deliveries` to see which reverted, and re-apply
+   them with 3a.
 5. **Permanent delivery day/slot + frequency** — `POST /api/plans/{customerPlanId}/changePlanDeliveryDetails?country=US`
    body `{"deliveryOption": "US-1-0800-2000", "deliveryInterval": 1}` → 200 (empty body). VERIFIED (same-value re-save,
    overrides survived). `deliveryInterval` is in weeks (the site uses `0` for "on demand" — do NOT expose 0).

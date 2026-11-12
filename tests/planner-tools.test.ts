@@ -274,6 +274,42 @@ describe('hf_weekly_plan', () => {
     expect(out.summary).toMatch(/^Couple week \(2 servings\) — delivering Mon 11\/30: .+ \+ .+\. Est\. box total \$\d+\.\d\d \(−\$8\.99 EXAMPLE65\)\.$/);
   });
 
+  describe('the subscription’s first box (HelloFresh will not resize it)', () => {
+    const firstBox: Route = [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W49', firstBoxDelivered: false }] }];
+
+    it('proposes no size change: the box keeps its size, said in notes, and picks are planned for the box as it is', async () => {
+      const { out } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'couple', avoid_recent_weeks: 0 }, [firstBox]);
+      expect(out.box).toEqual({ current: 'US-CBU-2-6-0', required: 'US-CBU-2-6-0', sizeChangeNeeded: false });
+      expect(out.servings).toBe(6);
+      expect(out.followUp.map((f: Any) => f.tool)).toEqual(['hf_select_meals']);
+      expect(out.notes).toHaveLength(1);
+      expect(out.notes[0]).toMatch(/2026-W49 is the first box.*cannot be resized.*keeps US-CBU-2-6-0.*couple profile.*US-CBU-2-2-0/);
+    });
+
+    it('a first box with a different meal count gets that many picks', async () => {
+      const three = { ...W49, product: { ...W49.product, handle: 'US-CBU-3-6-0', specs: { meals: 3, size: 6 } } };
+      const { out } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [
+        firstBox,
+        [/\/delivery_dates\/2026-W49$/, three],
+        [/deliveries$/, { items: [three] }],
+      ]);
+      expect(out.box.sizeChangeNeeded).toBe(false);
+      expect(out.picks.length).toBe(3);
+      expect(out.followUp.map((f: Any) => f.tool)).toEqual(['hf_select_meals']);
+      expect(out.notes[0]).toMatch(/keeps US-CBU-3-6-0/);
+    });
+
+    it('a first box already the profile’s size, or already delivered, adds no note', async () => {
+      const same = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, [firstBox]);
+      expect(same.out.notes).toBeUndefined();
+      const delivered = await call('hf_weekly_plan', { week: '2026-W49', profile: 'couple', avoid_recent_weeks: 0 }, [
+        [/\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W49', firstBoxDelivered: true }] }],
+      ]);
+      expect(delivered.out.notes).toBeUndefined();
+      expect(delivered.out.followUp[0].tool).toBe('hf_set_week_size');
+    });
+  });
+
   it('a skipped week: unskip, then resize, then pick — priced as a running box', async () => {
     const { out } = await call('hf_weekly_plan', { week: '2026-W50', profile: 'family', avoid_recent_weeks: 0 }, [
       [/deliveries$/, { items: [W50] }],

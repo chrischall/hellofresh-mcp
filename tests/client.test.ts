@@ -152,6 +152,30 @@ describe('HelloFreshClient writes', () => {
     expect(calls[0]!.body).toEqual({ id: SUB, week: WEEK, sku: 'US-CBU-2-2-0', delivery_option: 'US-1-0800-2000', source: 'one-off' });
   });
 
+  it('one-week box size: PUT carts/{week}/size with the subscription in the query, no "source"', async () => {
+    const { client, calls } = setup([new Response(null, { status: 204 })]);
+    await expect(client.setWeekSize({ subscriptionId: SUB, week: WEEK, sku: 'US-CBU-2-2-0' })).resolves.toBeUndefined();
+    expect(calls[0]!.method).toBe('PUT');
+    expect(calls[0]!.url).toBe(`${API_BASE}/carts/${WEEK}/size?country=US&locale=en-US&subscription=${SUB}`);
+    expect(calls[0]!.headers['content-type']).toBe('application/json');
+    expect(calls[0]!.headers.authorization).toBe('Bearer tok-1');
+    expect(calls[0]!.body).toEqual({ productHandle: 'US-CBU-2-2-0', hfMarketCode: 'US' });
+  });
+
+  it('one-week box size: any 2xx body (JSON, text or empty) is success', async () => {
+    const { client } = setup([json({ ok: true }), new Response('OK', { status: 200 }), new Response('', { status: 201 })]);
+    for (let i = 0; i < 3; i++) {
+      await expect(client.setWeekSize({ subscriptionId: SUB, week: WEEK, sku: 'US-CBU-2-2-0' })).resolves.toBeUndefined();
+    }
+  });
+
+  it('one-week box size: a Cloudflare page answered 200 is still EdgeBlockedError', async () => {
+    const page = '<html><title>Just a moment...</title><script>window._cf_chl_opt={}</script></html>';
+    const { client } = setup([new Response(page, { status: 200, headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' } })]);
+    const err = await client.setWeekSize({ subscriptionId: SUB, week: WEEK, sku: 'US-CBU-2-2-0' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EdgeBlockedError);
+  });
+
   it('permanent box size: PATCH the plan (204, no body)', async () => {
     const { client, calls } = setup([new Response(null, { status: 204 })]);
     await expect(client.setPlanProduct(PLAN, 'US-CBU-2-6-0')).resolves.toBeUndefined();

@@ -150,15 +150,15 @@ Read tools take `view: compact | full` (default `compact`). Money is US cents; p
 | `hf_list_box_sizes` | The box sizes (meals × people) the subscription can switch to, the current one marked. |
 | `hf_recent_picks` | Meals picked in recent weeks (best effort; unreadable weeks are named), to avoid repeating a recipe. |
 | `hf_select_meals` | Pick a week's meals by menu index (replaces the current picks; count must match the box). Confirm-gated, verified by re-reading the menu. |
-| `hf_set_week_size` | Change ONE week's box size (people, optionally meals), keeping its delivery day; picks may reset. Confirm-gated, verified. |
+| `hf_set_week_size` | Change ONE week's box size (people, optionally meals), keeping its delivery day; picks may reset. Refuses the subscription's first box (HelloFresh won't resize it). Confirm-gated, verified by re-reading the week. |
 | `hf_set_week_delivery_day` | Move ONE week to another offered delivery day/slot, keeping its box size. Confirm-gated, verified. |
 | `hf_skip_week` | Skip a week before its cutoff (nothing delivered or charged). Confirm-gated, verified. |
 | `hf_unskip_week` | Unskip a skipped week before its cutoff. Confirm-gated, verified. |
-| `hf_change_plan_size` | Permanently change the plan's box size. Confirm-gated, verified by re-reading the plan. |
+| `hf_change_plan_size` | Permanently change the plan's box size. **Resets every one-week size** (`hf_set_week_size`) to the new plan size: the preview lists those weeks and the result says which reverted, to re-apply. Confirm-gated, verified by re-reading the plan. |
 | `hf_change_delivery_schedule` | Permanently change the regular delivery slot and/or frequency (every 1–4 weeks). Confirm-gated, verified. |
 | `hf_list_profiles` | The meal-planner profiles (servings, meals, allowed categories, preferences, premium cap) and where they were loaded from. Local config only. |
 | `hf_suggest_meals` | Ranked picks for a week and a planner profile (e.g. a 4-person kid-friendly week), skipping recent repeats and favouring varied proteins: the top picks plus 2 alternates per slot, with reasons. Read-only. |
-| `hf_weekly_plan` | One read to approve a week: box size needed vs current, suggested picks, estimated total and voucher warning, a one-line summary, and the exact follow-up write calls in order. Read-only. |
+| `hf_weekly_plan` | One read to approve a week: box size needed vs current, suggested picks, estimated total and voucher warning, a one-line summary, and the exact follow-up write calls in order (never a resize of the first box, which keeps its size — see `notes`). Read-only. |
 
 ## Limits
 

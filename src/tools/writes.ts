@@ -33,6 +33,7 @@ import {
 import {
   deliveryStatusRequest,
   oneOffRequest,
+  weekSizeRequest,
   planDeliveryDetailsRequest,
   planProductRequest,
   selectMealsRequest,
@@ -42,7 +43,18 @@ import {
 import { projectDelivery, type ProjectedDelivery, type ProjectedMenu } from '../normalize.js';
 import type { CartMeal, RawDelivery } from '../types.js';
 import { foodMeta, type MintHint } from './hints.js';
-import { attempt, compactSelection, customerPlanIdOf, dateOf, loadAccount, readMenu, weekParam, type Account } from './shared.js';
+import {
+  attempt,
+  compactSelection,
+  customerPlanIdOf,
+  dateOf,
+  isUnresizableFirstBox,
+  loadAccount,
+  readMenu,
+  sleepMs,
+  weekParam,
+  type Account,
+} from './shared.js';
 import type { ToolDeps } from './index.js';
 
 type GateFields = Omit<ConfirmWriteOptions, 'tool' | 'confirmToken' | 'args'>;
@@ -171,6 +183,10 @@ async function requireOfferedSku(client: HelloFreshClient, account: Account, sku
   }
 }
 
+/** Re-reads after a one-week size change before calling it unverified, and the wait between them. */
+export const SIZE_VERIFY_READS = 3;
+export const SIZE_VERIFY_DELAY_MS = 1500;
+
 const skuOf = (meals: number, people: number) => `US-CBU-${meals}-${people}-0`;
 
 const boxOf = (d: Pick<ProjectedDelivery, 'sku' | 'meals' | 'servings' | 'deliveryOption'>) => ({
@@ -193,6 +209,7 @@ const SLOT = /^US-[1-7]-\d{4}-\d{4}$/;
 export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
   const { client } = deps;
   const now = deps.now ?? Date.now;
+  const sleep = deps.sleep ?? sleepMs;
 
   // ---- hf_select_meals (write 1) ----
 
@@ -292,12 +309,12 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
       }),
   });
 
-  // ---- hf_set_week_size (write 3, sku) ----
+  // ---- hf_set_week_size (write 3a: PUT carts/{week}/size) ----
 
-  interface OneOffState {
+  interface WeekSizeState {
     account: Account;
     week: string;
-    request: Parameters<HelloFreshClient['changeOneOff']>[0];
+    request: Parameters<HelloFreshClient['setWeekSize']>[0];
     before: Record<string, unknown>;
     beforePicks?: number;
   }
@@ -307,8 +324,9 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
     title: 'HelloFresh: change one week’s box size',
     description:
       'Change the box size (people, and optionally meals) of ONE HelloFresh delivery week only — the plan stays as it ' +
-      'is (hf_change_plan_size changes it for good). Keeps the week’s delivery day. HelloFresh may reset that week’s ' +
-      'meal picks; the result says so, and hf_select_meals re-picks.',
+      'is (hf_change_plan_size changes it for good, and resets these one-week sizes). Keeps the week’s delivery day. ' +
+      'The subscription’s first box cannot be resized (a HelloFresh rule) and is refused. HelloFresh may reset that ' +
+      'week’s meal picks; the result says so, and hf_select_meals re-picks.',
     destructive: false,
     meta: CHANGE(['hellofresh box size this week', 'servings this week', 'change people']),
     input: {
@@ -316,8 +334,13 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
       people: peopleParam,
       meals: mealsCountParam('for this week (default: the week’s current count)').optional(),
     },
-    async plan({ week, people, meals }): Promise<{ gate: GateFields; state: OneOffState }> {
+    async plan({ week, people, meals }): Promise<{ gate: GateFields; state: WeekSizeState }> {
       const account = await loadAccount(client);
+      if (isUnresizableFirstBox(account.subscription, week)) {
+        throw new McpToolError(`${week} is this subscription’s first box, which HelloFresh does not let you resize: it cannot be resized.`, {
+          hint: 'Its size stays as ordered; later weeks can be resized once it is scheduled.',
+        });
+      }
       const { raw, delivery } = await openWeek(client, account, week, now());
       requireRunning(delivery, week, 'change its box size');
       requireAllowed(raw, week, 'oneOffChange');
@@ -325,12 +348,11 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
       if (!count) throw new McpToolError(`HelloFresh returned no meal count for ${week}'s box; pass meals.`);
       const sku = skuOf(count, people);
       if (sku === delivery.sku) throw new McpToolError(`${week} is already a ${count}-meal box for ${people}.`);
-      if (!delivery.deliveryOption) throw new McpToolError(`HelloFresh returned no delivery slot for ${week}, which the change must keep.`);
       await requireOfferedSku(client, account, sku);
       const picks = await attempt(() => readMenu(client, account, delivery, week));
       const currentPicks = picks.ok ? picks.value.selected.map(compactSelection) : undefined;
 
-      const request = { subscriptionId: account.subscriptionId, week, sku, deliveryOption: delivery.deliveryOption };
+      const request = { subscriptionId: account.subscriptionId, week, sku };
       const from = { sku: delivery.sku, meals: delivery.meals, people: delivery.servings };
       return {
         gate: {
@@ -338,7 +360,7 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
           summary: `Change the ${week} box to ${count} meals for ${people} people (this week only)`,
           account: account.subscriptionId,
           target: week,
-          request: shown(oneOffRequest(request)),
+          request: shown(weekSizeRequest(request)),
           preview: {
             from,
             to: { sku, meals: count, people },
@@ -351,13 +373,18 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
     },
     execute: (s) =>
       sendAndVerify({
-        send: () => client.changeOneOff(s.request),
+        send: () => client.setWeekSize(s.request),
         before: s.before,
         checkWith: `hf_get_delivery {week: "${s.week}"}`,
-        mismatch: 'HelloFresh accepted the request, but the re-read week does not show the new box size.',
+        mismatch: `HelloFresh accepted the request, but ${SIZE_VERIFY_READS} re-reads of the week do not show the new box size.`,
         verify: async () => {
-          const delivery = projectDelivery(await client.getDelivery(s.account.subscriptionId, s.week));
-          const ok = delivery.sku === s.request.sku && delivery.deliveryOption === s.request.deliveryOption;
+          // The new size can take a moment to show: re-read a few times before calling it unverified.
+          let delivery = projectDelivery(await client.getDelivery(s.account.subscriptionId, s.week));
+          for (let read = 1; read < SIZE_VERIFY_READS && delivery.sku !== s.request.sku; read++) {
+            await sleep(SIZE_VERIFY_DELAY_MS);
+            delivery = projectDelivery(await client.getDelivery(s.account.subscriptionId, s.week));
+          }
+          const ok = delivery.sku === s.request.sku;
           const picks = await attempt(() => readMenu(client, s.account, delivery, s.week));
           const extra: Record<string, unknown> = picks.ok
             ? { picksAfter: picks.value.selected.map(compactSelection) }
@@ -370,7 +397,14 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
       }),
   });
 
-  // ---- hf_set_week_delivery_day (write 3, delivery_option) ----
+  // ---- hf_set_week_delivery_day (write 3b: the one-off, delivery_option only) ----
+
+  interface OneOffState {
+    account: Account;
+    week: string;
+    request: Parameters<HelloFreshClient['changeOneOff']>[0];
+    before: Record<string, unknown>;
+  }
 
   registerGated(server, {
     name: 'hf_set_week_delivery_day',
@@ -502,18 +536,58 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
 
   // ---- hf_change_plan_size (write 4) ----
 
+  interface Override {
+    week: string;
+    sku: string;
+  }
+
   interface PlanSizeState {
     planId: string;
     sku: string;
     before: { sku?: string };
+    overrides: Override[];
   }
+
+  /** Upcoming running weeks still open for changes whose size differs from the plan's: week-only overrides. */
+  const overridesOf = (deliveries: readonly ProjectedDelivery[], planSku: string | undefined, at: number): Override[] =>
+    deliveries.flatMap((d) =>
+      d.status === 'running' &&
+      d.week &&
+      d.sku &&
+      d.sku !== planSku &&
+      !(d.cutoffDate && Date.parse(d.cutoffDate) <= at)
+        ? [{ week: d.week, sku: d.sku }]
+        : [],
+    );
+
+  /** Which overrides the plan change reverted to `sku` (re-read best effort). */
+  const overrideReport = async (overrides: Override[], sku: string): Promise<Record<string, unknown>> => {
+    if (overrides.length === 0) return {};
+    const read = await attempt(async () => ((await client.listDeliveries()).items ?? []).map(projectDelivery));
+    if (!read.ok) return { overridesError: read.reason, overridesNote: overridesNote(overrides) };
+    const now = new Map(read.value.map((d) => [d.week, d.sku]));
+    const reverted = overrides.filter((o) => now.get(o.week) === sku && o.sku !== sku).map((o) => ({ week: o.week, from: o.sku, to: sku }));
+    const kept = overrides.filter((o) => now.has(o.week) && now.get(o.week) !== sku).map((o) => ({ week: o.week, sku: now.get(o.week) }));
+    const unread = overrides.filter((o) => !now.has(o.week)).map((o) => o.week);
+    return {
+      ...(reverted.length > 0 ? { overridesReverted: reverted } : {}),
+      ...(kept.length > 0 ? { overridesKept: kept } : {}),
+      ...(unread.length > 0 ? { overridesUnread: unread } : {}),
+      overridesNote: overridesNote(overrides),
+    };
+  };
+  const overridesNote = (overrides: Override[]) =>
+    'A plan size change resets one-week sizes. To keep one, re-apply it with hf_set_week_size ' +
+    `(the weeks were: ${overrides.map((o) => `${o.week} ${o.sku}`).join(', ')}).`;
 
   registerGated(server, {
     name: 'hf_change_plan_size',
     title: 'HelloFresh: change the plan’s box size',
     description:
-      'Permanently change the HelloFresh plan’s box size (meals per week × people) for every future week. Weeks already ' +
-      'given a one-week size (hf_set_week_size) keep it. Re-reads the plan to verify.',
+      'Permanently change the HelloFresh plan’s box size (meals per week × people) for every future week. Warning: ' +
+      'this RESETS every one-week size set with hf_set_week_size — those weeks revert to the new plan size. The ' +
+      'preview lists them, and the result says which reverted so they can be re-applied with hf_set_week_size. ' +
+      'Re-reads the plan to verify.',
     destructive: true,
     meta: CHANGE(['hellofresh plan size', 'change hellofresh plan', 'permanent box size']),
     input: { meals: mealsCountParam('on the plan'), people: peopleParam },
@@ -526,6 +600,8 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
       if (sku === current) throw new McpToolError(`The plan is already ${meals} meals for ${people} people (${sku}).`);
       await requireOfferedSku(client, account, sku);
       const size = current ? /-(\d+)-(\d+)-\d+$/.exec(current) : null;
+      const upcoming = await attempt(async () => ((await client.listDeliveries()).items ?? []).map(projectDelivery));
+      const overrides = upcoming.ok ? overridesOf(upcoming.value, current, now()) : [];
       return {
         gate: {
           action: 'hellofresh.plan.size',
@@ -536,10 +612,21 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
           preview: {
             from: { sku: current, ...(size ? { meals: Number(size[1]), people: Number(size[2]) } : {}) },
             to: { sku, meals, people },
-            note: 'Permanent: applies to every future week; weeks with a one-week size change keep theirs.',
+            note: 'Permanent: applies to every future week, and resets any one-week size (hf_set_week_size) to the new plan size.',
+            ...(overrides.length > 0
+              ? {
+                  overriddenWeeks: overrides.map((o) => ({ ...o, revertsTo: sku })),
+                  warning:
+                    `${overrides.map((o) => `${o.week} (now ${o.sku})`).join(', ')} will revert to ${sku}: a plan size change ` +
+                    'resets one-week sizes. Re-apply any you want to keep with hf_set_week_size afterwards.',
+                }
+              : {}),
+            ...(upcoming.ok
+              ? {}
+              : { overridesUnknown: `Could not read the upcoming weeks (${upcoming.reason}), so one-week sizes that would revert are not listed.` }),
           },
         },
-        state: { planId, sku, before: { sku: current } },
+        state: { planId, sku, before: { sku: current }, overrides },
       };
     },
     execute: (s) =>
@@ -550,7 +637,7 @@ export function registerWriteTools(server: McpServer, deps: ToolDeps): void {
         mismatch: 'HelloFresh accepted the request, but the re-read plan does not show the new box size.',
         verify: async () => {
           const sku = (await client.listPlans()).find((p) => p.id === s.planId)?.planItems?.[0]?.productHandle;
-          return { ok: sku === s.sku, after: { sku } };
+          return { ok: sku === s.sku, after: { sku }, extra: await overrideReport(s.overrides, s.sku) };
         },
       }),
   });

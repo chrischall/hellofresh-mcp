@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createTestHarness, parseToolResult, type TestHarness } from '@chrischall/mcp-utils/test';
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { HelloFreshClient, type ClientSession } from '../src/client.js';
 import { registerWriteTools } from '../src/tools/writes.js';
+import { sleepMs } from '../src/tools/shared.js';
 import type { ToolDeps } from '../src/tools/index.js';
 import { offlineDeps } from './helpers.js';
 
@@ -65,6 +66,7 @@ function baseRoutes(): Route[] {
     ['PUT', /\/v1\/carts\//, { hasSeamlessDowngraded: false }],
     ['PATCH', /\/delivery_dates\//, () => json({ count: 1, items: [] }, 201)],
     ['POST', /\/oneoff$/, () => json({ count: 1, items: [] }, 201)],
+    ['PUT', /\/carts\/[^/]+\/size$/, () => new Response(null, { status: 204 })],
     ['PATCH', /\/api\/plans\//, () => new Response(null, { status: 204 })],
     ['POST', /\/changePlanDeliveryDetails$/, () => new Response('', { status: 200 })],
   ];
@@ -86,6 +88,7 @@ interface SetupOptions {
 
 async function setup(opts: SetupOptions = {}) {
   const sent: Sent[] = [];
+  const sleeps: number[] = [];
   const fetchImpl = (async (input: string, init?: RequestInit) => {
     const url = new URL(input);
     const method = init?.method ?? 'GET';
@@ -103,11 +106,15 @@ async function setup(opts: SetupOptions = {}) {
     ...offlineDeps(),
     client: new HelloFreshClient({ session, fetchImpl }),
     now: () => opts.now ?? BEFORE_CUTOFF,
+    sleep: async (ms: number) => {
+      sleeps.push(ms);
+    },
   };
   harness = await createTestHarness((server) => registerWriteTools(server, deps));
   const h = harness;
   return {
     sent,
+    sleeps,
     writes: () => sent.filter((s) => s.method !== 'GET'),
     call: (name: string, args: Record<string, unknown>) => h.callTool(name, args),
     /** Phase 1 (preview) then phase 2 with its token. */
@@ -162,6 +169,36 @@ describe('write tools: registration', () => {
       expect(t.description, t.name).toMatch(/Never make this write/);
       expect((t._meta as Any).mint, t.name).toMatchObject({ domain: 'food', intent: 'change' });
     }
+  });
+});
+
+describe('sleepMs (the default re-read back-off)', () => {
+  it('resolves after the given time', async () => {
+    vi.useFakeTimers();
+    try {
+      let done = false;
+      const p = sleepMs(1500).then(() => {
+        done = true;
+      });
+      await vi.advanceTimersByTimeAsync(1499);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await p;
+      expect(done).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('write tools: descriptions', () => {
+  it('hf_change_plan_size warns that it resets week-only sizes; hf_set_week_size names the first-box rule', async () => {
+    harness = await createTestHarness((server) => registerWriteTools(server, offlineDeps()));
+    const tools = (await harness.client.listTools()).tools;
+    const desc = (n: string) => tools.find((t) => t.name === n)!.description!;
+    expect(desc('hf_change_plan_size')).toMatch(/resets?.*one-week size.*hf_set_week_size/i);
+    expect(desc('hf_set_week_size')).toMatch(/first box/i);
+    expect(desc('hf_set_week_size')).toMatch(/meal picks/i);
   });
 });
 
@@ -325,22 +362,23 @@ describe('hf_set_week_size', () => {
   const args = { week: '2026-W49', people: 2 };
   const resized = { ...W49, product: { ...W49.product, handle: 'US-CBU-2-2-0', specs: { meals: 2, size: 2 } } };
 
-  it('phase 1 previews the one-off POST, keeping the delivery slot, and warns about picks', async () => {
+  it('phase 1 previews the carts/size PUT (not the one-off) and warns about picks', async () => {
     const t = await setup();
     const preview = parseToolResult<Any>(await t.call('hf_set_week_size', args));
     expect(t.writes()).toEqual([]);
     expect(preview.preview).toMatchObject({
-      method: 'POST',
-      path: '/gw/api/subscriptions/90000001/oneoff',
-      willSendQuery: { country: 'US', locale: 'en-US' },
-      willSend: { id: '90000001', week: '2026-W49', sku: 'US-CBU-2-2-0', delivery_option: 'US-1-0800-2000', source: 'one-off' },
+      method: 'PUT',
+      path: '/gw/carts/2026-W49/size',
+      willSendQuery: { country: 'US', locale: 'en-US', subscription: '90000001' },
+      willSend: { productHandle: 'US-CBU-2-2-0', hfMarketCode: 'US' },
       from: { sku: 'US-CBU-2-6-0', meals: 2, people: 6 },
       to: { sku: 'US-CBU-2-2-0', meals: 2, people: 2 },
     });
+    expect(preview.preview.willSend).not.toHaveProperty('source');
     expect(preview.preview.warning).toMatch(/reset/);
   });
 
-  it('phase 2 sends the documented one-off and verifies the new size by re-reading the week', async () => {
+  it('phase 2 sends the documented size PUT and verifies the new size by re-reading the week', async () => {
     const t = await setup({
       after: [
         ['GET', /delivery_dates\/2026-W49$/, resized],
@@ -348,11 +386,13 @@ describe('hf_set_week_size', () => {
       ],
     });
     const { out } = await t.twoPhase('hf_set_week_size', args);
-    const [post] = t.writes();
+    const [put] = t.writes();
     expect(t.writes()).toHaveLength(1);
-    expect(post!.url.pathname).toBe('/gw/api/subscriptions/90000001/oneoff');
-    expect(post!.url.search).toBe('?country=US&locale=en-US');
-    expect(post!.body).toEqual({ id: '90000001', week: '2026-W49', sku: 'US-CBU-2-2-0', delivery_option: 'US-1-0800-2000', source: 'one-off' });
+    expect(put!.method).toBe('PUT');
+    expect(put!.url.pathname).toBe('/gw/carts/2026-W49/size');
+    expect(put!.url.search).toBe('?country=US&locale=en-US&subscription=90000001');
+    expect(put!.body).toEqual({ productHandle: 'US-CBU-2-2-0', hfMarketCode: 'US' });
+    expect(t.sent.some((s) => s.url.pathname.endsWith('/oneoff'))).toBe(false);
     expect(out.status).toBe('verified');
     expect(out.before).toMatchObject({ sku: 'US-CBU-2-6-0' });
     expect(out.after).toMatchObject({ sku: 'US-CBU-2-2-0', deliveryOption: 'US-1-0800-2000' });
@@ -360,6 +400,48 @@ describe('hf_set_week_size', () => {
     expect(menuAfter.url.searchParams.get('product-sku')).toBe('US-CBU-2-2-0');
     expect(out.picksAfter).toEqual([]);
     expect(out.warning).toMatch(/picks were reset.*hf_select_meals/);
+  });
+
+  it('an empty / non-JSON 2xx answer to the size PUT is fine', async () => {
+    const t = await setup({
+      routes: [['PUT', /\/carts\/2026-W49\/size$/, () => new Response('OK', { status: 200 })]],
+      after: [['GET', /delivery_dates\/2026-W49$/, resized]],
+    });
+    const { out } = await t.twoPhase('hf_set_week_size', args);
+    expect(out.status).toBe('verified');
+  });
+
+  it('re-reads up to 3 times, ~1.5 s apart, before reporting unverified', async () => {
+    let reads = 0;
+    const t = await setup({
+      after: [['GET', /delivery_dates\/2026-W49$/, () => json(++reads >= 3 ? resized : W49)]],
+    });
+    const { out } = await t.twoPhase('hf_set_week_size', args);
+    expect(out.status).toBe('verified');
+    expect(reads).toBe(3);
+    expect(t.sleeps).toEqual([1500, 1500]);
+  });
+
+  it('a week still at the old size after 3 re-reads reports unverified', async () => {
+    const t = await setup();
+    const { out } = await t.twoPhase('hf_set_week_size', args);
+    expect(out.status).toBe('unverified');
+    const reads = t.sent.filter((s, i) => s.url.pathname.endsWith('/delivery_dates/2026-W49') && i > t.sent.findIndex((x) => x.method === 'PUT'));
+    expect(reads).toHaveLength(3);
+    expect(t.sleeps).toEqual([1500, 1500]);
+  });
+
+  it('refuses the subscription’s first box while it is undelivered (HelloFresh will not resize it), sending nothing', () =>
+    expectRefused('hf_set_week_size', args, /first box.*cannot be resized/i, {
+      routes: [['GET', /\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W49', firstBoxDelivered: false }] }]],
+    }));
+
+  it('a first box already delivered does not block a later week', async () => {
+    const t = await setup({
+      routes: [['GET', /\/api\/customers\/me\/subscriptions$/, { count: 1, items: [{ ...SUB, firstDeliveryWeek: '2026-W49', firstBoxDelivered: true }] }]],
+    });
+    const preview = parseToolResult<Any>(await t.call('hf_set_week_size', args));
+    expect(preview.preview.willSend.productHandle).toBe('US-CBU-2-2-0');
   });
 
   it('picks that survive are reported without a reset warning', async () => {
@@ -382,16 +464,10 @@ describe('hf_set_week_size', () => {
     expect(out.picksError).toMatch(/400/);
   });
 
-  it('a week that still shows the old size reports unverified', async () => {
-    const t = await setup();
-    const { out } = await t.twoPhase('hf_set_week_size', args);
-    expect(out.status).toBe('unverified');
-  });
-
   it('meals changes the meal count too', async () => {
     const t = await setup();
     const preview = parseToolResult<Any>(await t.call('hf_set_week_size', { week: '2026-W49', people: 4, meals: 3 }));
-    expect(preview.preview.willSend.sku).toBe('US-CBU-3-4-0');
+    expect(preview.preview.willSend.productHandle).toBe('US-CBU-3-4-0');
   });
 
   it('a menu that cannot be read before the change leaves the current picks out of the preview', async () => {
@@ -439,11 +515,7 @@ describe('hf_set_week_size', () => {
       routes: [['GET', /delivery_dates\/2026-W49$/, { ...W49, allowedActions: { oneOffChange: false } }]],
     }));
 
-  it('refuses when the week has no delivery slot to keep, or no meal count', async () => {
-    await expectRefused('hf_set_week_size', args, /delivery slot/, {
-      routes: [['GET', /delivery_dates\/2026-W49$/, { ...W49, deliveryOption: undefined }]],
-    });
-    await harness?.close();
+  it('refuses when the week has no meal count', async () => {
     await expectRefused('hf_set_week_size', args, /meal count/, {
       routes: [['GET', /delivery_dates\/2026-W49$/, { ...W49, product: { handle: 'X' } }]],
     });
@@ -597,6 +669,96 @@ describe('hf_change_plan_size', () => {
     expect(patch!.url.pathname).toBe(`/gw/api/plans/${PLAN_ID}`);
     expect(patch!.body).toEqual({ productHandle: 'US-CBU-2-2-0' });
     expect(out).toMatchObject({ status: 'verified', before: { sku: 'US-CBU-2-6-0' }, after: { sku: 'US-CBU-2-2-0' } });
+  });
+
+  describe('week-only size overrides (a plan change resets them)', () => {
+    const sized = (d: Any, sku: string) => ({ ...d, product: { ...d.product, handle: sku } });
+    // W49 carries a one-week 2×2 override on a 2×6 plan; W50 is skipped; W51 is at the plan size;
+    // W52 is overridden but past its cutoff (locked: not listed).
+    const W51 = { ...W49, id: '2026-W51', cutoffDate: '2026-12-09T23:59:59-05:00' };
+    const W52 = { ...sized(W49, 'US-CBU-3-2-0'), id: '2026-W52', cutoffDate: '2026-11-19T23:59:59-05:00' };
+    const overridden = { count: 4, items: [sized(W49, 'US-CBU-2-2-0'), W50, W51, W52] };
+    const toPlan = { meals: 2, people: 4 };
+    const changed4 = [{ ...PLANS[0], planItems: [{ productHandle: 'US-CBU-2-4-0' }] }];
+
+    it('the preview lists each upcoming running week whose size differs from the plan, and warns it will revert', async () => {
+      const t = await setup({ routes: [['GET', /\/api\/customers\/me\/deliveries$/, overridden]] });
+      const preview = parseToolResult<Any>(await t.call('hf_change_plan_size', toPlan));
+      expect(preview.preview.overriddenWeeks).toEqual([{ week: '2026-W49', sku: 'US-CBU-2-2-0', revertsTo: 'US-CBU-2-4-0' }]);
+      expect(preview.preview.warning).toMatch(/2026-W49.*revert.*US-CBU-2-4-0.*hf_set_week_size/);
+    });
+
+    it('after execute, reports which overridden weeks reverted (and which kept their size)', async () => {
+      const t = await setup({
+        routes: [['GET', /\/api\/customers\/me\/deliveries$/, overridden]],
+        after: [
+          ['GET', /\/api\/plans$/, changed4],
+          ['GET', /\/api\/customers\/me\/deliveries$/, { items: [sized(W49, 'US-CBU-2-4-0'), W50, sized(W51, 'US-CBU-2-4-0')] }],
+        ],
+      });
+      const { out } = await t.twoPhase('hf_change_plan_size', toPlan);
+      expect(out.status).toBe('verified');
+      expect(out.overridesReverted).toEqual([{ week: '2026-W49', from: 'US-CBU-2-2-0', to: 'US-CBU-2-4-0' }]);
+      expect(out.overridesKept).toBeUndefined();
+      expect(out.overridesNote).toMatch(/hf_set_week_size/);
+    });
+
+    it('an override that survived the change is reported as kept', async () => {
+      const t = await setup({
+        routes: [['GET', /\/api\/customers\/me\/deliveries$/, overridden]],
+        after: [['GET', /\/api\/plans$/, changed4]],
+      });
+      const { out } = await t.twoPhase('hf_change_plan_size', toPlan);
+      expect(out.overridesReverted).toBeUndefined();
+      expect(out.overridesKept).toEqual([{ week: '2026-W49', sku: 'US-CBU-2-2-0' }]);
+    });
+
+    it('a week missing from the re-read is reported unread; a failed re-read is noted, not fatal', async () => {
+      const t = await setup({
+        routes: [['GET', /\/api\/customers\/me\/deliveries$/, overridden]],
+        after: [
+          ['GET', /\/api\/plans$/, changed4],
+          ['GET', /\/api\/customers\/me\/deliveries$/, {}],
+        ],
+      });
+      const { out } = await t.twoPhase('hf_change_plan_size', toPlan);
+      expect(out.overridesUnread).toEqual(['2026-W49']);
+      await harness?.close();
+      const t2 = await setup({
+        routes: [['GET', /\/api\/customers\/me\/deliveries$/, overridden]],
+        after: [
+          ['GET', /\/api\/plans$/, changed4],
+          ['GET', /\/api\/customers\/me\/deliveries$/, () => json({ e: 1 }, 400)],
+        ],
+      });
+      const { out: out2 } = await t2.twoPhase('hf_change_plan_size', toPlan);
+      expect(out2.status).toBe('verified');
+      expect(out2.overridesError).toMatch(/400/);
+    });
+
+    it('a deliveries list with no items, or a week without an id or size, lists no override', async () => {
+      const t = await setup({ routes: [['GET', /\/api\/customers\/me\/deliveries$/, { items: [{ ...W49, id: undefined, product: { handle: 'US-CBU-2-2-0' } }, { ...W49, product: undefined }] }]] });
+      const preview = parseToolResult<Any>(await t.call('hf_change_plan_size', toPlan));
+      expect(preview.preview.overriddenWeeks).toBeUndefined();
+      await harness?.close();
+      const t2 = await setup({ routes: [['GET', /\/api\/customers\/me\/deliveries$/, {}]] });
+      expect(parseToolResult<Any>(await t2.call('hf_change_plan_size', toPlan)).preview.overriddenWeeks).toBeUndefined();
+    });
+
+    it('no overrides: nothing listed, no deliveries re-read', async () => {
+      const t = await setup({ after: [['GET', /\/api\/plans$/, changed4]] });
+      const { preview, out } = await t.twoPhase('hf_change_plan_size', toPlan);
+      expect(preview.preview.overriddenWeeks).toBeUndefined();
+      expect(preview.preview.warning).toBeUndefined();
+      expect(out).not.toHaveProperty('overridesReverted');
+      expect(out).not.toHaveProperty('overridesNote');
+    });
+
+    it('an unreadable deliveries list before the change is a preview caveat, not a refusal', async () => {
+      const t = await setup({ routes: [['GET', /\/api\/customers\/me\/deliveries$/, () => json({ e: 1 }, 400)]] });
+      const preview = parseToolResult<Any>(await t.call('hf_change_plan_size', toPlan));
+      expect(preview.preview.overridesUnknown).toMatch(/400/);
+    });
   });
 
   it('a plan that still shows the old size reports unverified', async () => {
