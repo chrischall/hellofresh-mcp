@@ -34,6 +34,7 @@
       ],
       "env": {
         "HELLOFRESH_WS_PORT": "${user_config.hellofresh_ws_port}",
+        "MCP_USER_TZ": "${user_config.user_tz}",
         "MCP_CONFIRM_MODE": "${user_config.confirm_mode}",
         "MCP_CONFIRM_ELICITATION": "${user_config.confirm_elicitation}",
         "HELLOFRESH_DEBUG": "${user_config.debug}",
@@ -47,6 +48,12 @@
       "type": "number",
       "title": "Bridge port",
       "description": "The fetchproxy bridge port. The whole fetchproxy fleet and ContextMint Bridge share `37149`; override only for local testing (or when a host injects a per-registration port). Defaults to 37149.",
+      "required": false
+    },
+    "user_tz": {
+      "type": "string",
+      "title": "Time zone (optional)",
+      "description": "Optional. Your IANA time zone, for example America/New_York. It decides \"this week\" in hf_recent_picks. Leave blank to use the system zone.",
       "required": false
     },
     "confirm_mode": {

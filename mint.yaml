@@ -28,6 +28,12 @@ env:
       Concentrator port for the fetchproxy bridge (defaults to the fleet-shared
       37149). The runner injects a per-registration port for a hosted bridged
       child, so this is the name to give `bridgePortEnv` at registration.
+  - name: MCP_USER_TZ
+    required: false
+    help: >-
+      Your IANA time zone (e.g. America/New_York), used for "this week" in
+      hf_recent_picks. Unset, a hosted server uses the system zone (UTC), so
+      the week rolls over at UTC midnight on Sunday.
   - name: HELLOFRESH_DEBUG
     required: false
     help: >-

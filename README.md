@@ -55,7 +55,7 @@ The plugin also installs the [`hellofresh` skill](skills/hellofresh/SKILL.md), w
 
 ### Claude Desktop (.mcpb)
 
-Install the `.mcpb` bundle from the [latest release](https://github.com/chrischall/hellofresh-mcp/releases). Its optional settings (bridge port, write confirmation mode, confirmation prompts, debug logging) set the environment variables in [Configuration](#configuration); leave them blank for the defaults.
+Install the `.mcpb` bundle from the [latest release](https://github.com/chrischall/hellofresh-mcp/releases). Its optional settings (bridge port, time zone, write confirmation mode, confirmation prompts, debug logging) set the environment variables in [Configuration](#configuration); leave them blank for the defaults.
 
 ## Setup: sign in and pair (once)
 
@@ -84,6 +84,7 @@ If calls fail with "Not signed in to HelloFresh", sign in again at hellofresh.co
 | Env var | Default | Purpose |
 |---|---|---|
 | `HELLOFRESH_WS_PORT` | `37149` | The fetchproxy bridge port. The whole fetchproxy fleet and ContextMint Bridge share `37149`. Override it only for local testing, or when a host injects a per-registration port. |
+| `MCP_USER_TZ` | the system zone | Your IANA time zone, for example `America/New_York`. It decides "this week" in `hf_recent_picks`. Set it when hosted, because a hosted server runs in UTC. |
 | `HELLOFRESH_DEBUG` | off | Log the bridge's role and lifecycle to stderr. |
 | `MCP_CONFIRM_MODE` | `ask-user` | What a write does on a client that cannot show a confirmation prompt. See below. |
 | `MCP_CONFIRM_ELICITATION` | `on` | `off` never shows a confirmation prompt, so every client takes the `MCP_CONFIRM_MODE` path. Use it for clients that declare prompts but never render them. |
@@ -148,7 +149,7 @@ Read tools take `view: compact | full` (default `compact`). A box `price` with `
 | `hf_get_delivery` | One delivery week: dates, status, box size, current meal picks, allowed actions, alternative days, and the box price (HelloFresh's checkout total + premiums, or a labelled estimate). |
 | `hf_get_menu` | A week's menu at its box size, with `seafood_only`, `kid_friendly`, `max_minutes`, `max_premium_per_serving` and `selected_only` filters and protein swaps. |
 | `hf_list_box_sizes` | The box sizes (meals × people) the subscription can switch to, the current one marked. |
-| `hf_recent_picks` | Meals picked in recent weeks (best effort; unreadable weeks are named), to avoid repeating a recipe. |
+| `hf_recent_picks` | Meals picked in recent weeks (best effort; unreadable weeks are named, weeks before the first delivery are `no_box`), to avoid repeating a recipe. |
 | `hf_select_meals` | Pick a week's meals by menu index (replaces the current picks; count must match the box). Confirm-gated, verified by re-reading the menu. |
 | `hf_set_week_size` | Change ONE week's box size (people, optionally meals), keeping its delivery day; picks may reset. Refuses the subscription's first box (HelloFresh won't resize it). Confirm-gated, verified by re-reading the week. |
 | `hf_set_week_delivery_day` | Move ONE week to another offered delivery day/slot, keeping its box size. Confirm-gated, verified. |
