@@ -12,7 +12,7 @@ import { registerFavoriteTools } from './favorites.js';
 import { registerHealthcheckTool } from './healthcheck.js';
 import { registerPlannerTools } from './planner.js';
 import { registerReadTools } from './reads.js';
-import { registerWriteTools } from './writes.js';
+import { registerWriteTools } from './writes/index.js';
 
 /** The dependencies every registrar receives (built once, outside the registrars). */
 export interface ToolDeps {

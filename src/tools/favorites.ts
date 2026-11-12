@@ -22,7 +22,7 @@ import { addFavoriteRequest, removeFavoriteRequest, type HelloFreshClient } from
 import { projectDelivery, projectFavorites, type ProjectedMenu, type RatingScaleName } from '../normalize.js';
 import { foodMeta } from './hints.js';
 import { RATING_SCALES, attempt, loadAccount, readMenu, readRatings, weekParam, type Account } from './shared.js';
-import { CHANGE, registerGated, sendAndVerify, shown, type GateFields } from './writes.js';
+import { CHANGE, registerGated, sendAndVerify, shown, type GateFields } from './writes/shared.js';
 import type { ToolDeps } from './index.js';
 
 const readOnly = (title: string) => toolAnnotations({ title, readOnly: true, idempotent: true, openWorld: true });
