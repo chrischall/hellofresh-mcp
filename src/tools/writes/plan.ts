@@ -56,15 +56,17 @@ export function registerPlanWrites(server: McpServer, deps: ToolDeps): void {
         : [],
     );
 
-  /** Which overrides the plan change reverted to `sku` (re-read best effort). */
+  /** Which overrides (all at a size other than `sku`) the plan change reverted to `sku` (re-read best effort). */
   const overrideReport = async (overrides: Override[], sku: string): Promise<Record<string, unknown>> => {
     if (overrides.length === 0) return {};
     const read = await attempt(async () => ((await client.listDeliveries()).items ?? []).map(projectDelivery));
     if (!read.ok) return { overridesError: read.reason, overridesNote: overridesNote(overrides) };
-    const now = new Map(read.value.map((d) => [d.week, d.sku]));
-    const reverted = overrides.filter((o) => now.get(o.week) === sku && o.sku !== sku).map((o) => ({ week: o.week, from: o.sku, to: sku }));
-    const kept = overrides.filter((o) => now.has(o.week) && now.get(o.week) !== sku).map((o) => ({ week: o.week, sku: now.get(o.week) }));
-    const unread = overrides.filter((o) => !now.has(o.week)).map((o) => o.week);
+    const skuNow = new Map(read.value.map((d) => [d.week, d.sku]));
+    const reverted = overrides.filter((o) => skuNow.get(o.week) === sku).map((o) => ({ week: o.week, from: o.sku, to: sku }));
+    const kept = overrides
+      .filter((o) => skuNow.has(o.week) && skuNow.get(o.week) !== sku)
+      .map((o) => ({ week: o.week, sku: skuNow.get(o.week) }));
+    const unread = overrides.filter((o) => !skuNow.has(o.week)).map((o) => o.week);
     return {
       ...(reverted.length > 0 ? { overridesReverted: reverted } : {}),
       ...(kept.length > 0 ? { overridesKept: kept } : {}),
@@ -97,7 +99,10 @@ export function registerPlanWrites(server: McpServer, deps: ToolDeps): void {
       await requireOfferedSku(client, account, sku);
       const size = current ? /-(\d+)-(\d+)-\d+$/.exec(current) : null;
       const upcoming = await attempt(async () => ((await client.listDeliveries()).items ?? []).map(projectDelivery));
-      const overrides = upcoming.ok ? overridesOf(upcoming.value, current, now(), account.subscription) : [];
+      const all = upcoming.ok ? overridesOf(upcoming.value, current, now(), account.subscription) : [];
+      // A one-week size already equal to the new plan size has nothing to revert to: listed apart, never as reverting.
+      const overrides = all.filter((o) => o.sku !== sku);
+      const atNewSize = all.filter((o) => o.sku === sku);
       return {
         gate: {
           action: 'hellofresh.plan.size',
@@ -115,6 +120,14 @@ export function registerPlanWrites(server: McpServer, deps: ToolDeps): void {
                   warning:
                     `${overrides.map((o) => `${o.week} (now ${o.sku})`).join(', ')} will revert to ${sku}: a plan size change ` +
                     'resets one-week sizes. Re-apply any you want to keep with hf_set_week_size afterwards.',
+                }
+              : {}),
+            ...(atNewSize.length > 0
+              ? {
+                  alreadyAtNewSize: atNewSize,
+                  alreadyAtNewSizeNote:
+                    `${atNewSize.map((o) => o.week).join(', ')} already has a one-week size of ${sku}, the new plan size, ` +
+                    'so it stays unchanged: nothing to revert or re-apply.',
                 }
               : {}),
             ...(upcoming.ok
