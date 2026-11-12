@@ -19,7 +19,11 @@ npm run test:coverage  # 100% thresholds, run by CI
 - The bridge (serverName `hellofresh-mcp`, port `HELLOFRESH_WS_PORT`, default
   37149) is used ONLY to read the `apiV2Auth` cookie on `www.hellofresh.com`
   and to write a refreshed token set back to it. Every API call is plain Node
-  `fetch` to `https://www.hellofresh.com/gw` with `Authorization: Bearer`.
+  `fetch` to `https://www.hellofresh.com/gw` with `Authorization: Bearer` —
+  except `POST /gw/calculate` (the real box price), which Cloudflare refuses
+  from Node: it runs as an in-tab fetch (`bridge.fetchInTab`, the `fetch`
+  capability already in the pairing scope) with the same bearer. Its answer
+  carries ids and the address: project to money fields only.
 - The refresh token ROTATES on every `POST /gw/refresh` and the response sets
   no cookie: a Node-side refresh MUST be written back (js-cookie v3 encoding,
   `encodeAuthCookie` in `src/session.ts`) or the browser is signed out. The

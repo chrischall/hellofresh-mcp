@@ -1,10 +1,11 @@
 // Shared bits for the hf_ tools: the account context every call starts from
 // (the subscription and its plan id), the `week` / `view` parameters, the
-// box-number and estimate helpers, and the brief line.
+// real-price (HelloFresh's calculator) and fallback-estimate helpers, the
+// box-number helpers, and the brief line.
 
 import { z } from 'zod';
 import { McpToolError, messageOf, viewParam, type View } from '@chrischall/mcp-utils';
-import type { HelloFreshClient } from '../client.js';
+import type { BoxPrice, HelloFreshClient } from '../client.js';
 import {
   estimateBoxTotal,
   projectDelivery,
@@ -143,6 +144,102 @@ export async function readPicks(
     weeks: read,
     recipeNames: [...new Set(read.flatMap((w) => w.picks.map((p) => p.name)).filter((n): n is string => !!n))],
     unreadable: results.flatMap(({ week, read: r }) => (r.ok ? [] : [{ week, reason: r.reason }])),
+  };
+}
+
+// ---- the real price (POST /gw/calculate) ------------------------------------------
+
+/** How many weeks hf_list_deliveries prices at once (each is a menu read + an in-tab calculator call). */
+export const PRICE_CONCURRENCY = 3;
+
+export const PREMIUM_NOTE =
+  'HelloFresh’s own price calculator (its checkout price) leaves premium recipe charges out: premiumUpcharge is ' +
+  'the meals’ upcharge for the box, reported separately and added in totalWithPremiums.';
+
+export const PREMIUM_UNKNOWN_NOTE =
+  'HelloFresh’s own price calculator leaves premium recipe charges out, and the menu could not be read, so any ' +
+  'premium upcharge is unknown and NOT included.';
+
+/** HelloFresh's own price for a box (US dollars), plus the premiums it leaves out. */
+export type HelloFreshPrice = { source: 'hellofresh' } & BoxPrice & {
+  premiumUpcharge?: number;
+  totalWithPremiums?: number;
+  note: string;
+};
+
+export interface PriceInput {
+  week: string;
+  sku: string | undefined;
+  /** Servings. */
+  people: number | undefined;
+  deliveryOption: string | undefined;
+  deliveryDate: string | undefined;
+  /** The box's meals (picked or suggested). */
+  recipeIndexes: readonly number[];
+  /** Their Σ premium upcharge for the box, cents — undefined when the meals are unknown. */
+  premiumCents: number | undefined;
+}
+
+const roundCents = (dollars: number) => Math.round(dollars * 100) / 100;
+
+/** Σ premium upcharge of a selection, in cents. */
+export const premiumCentsOf = (meals: ReadonlyArray<{ premiumBoxCents: number; quantity?: number }>) =>
+  meals.reduce((sum, m) => sum + m.premiumBoxCents * (m.quantity ?? 1), 0);
+
+/**
+ * The box's price from HelloFresh's own calculator (an in-tab fetch through the
+ * bridge). Throws when an input is missing or the calculator fails: callers
+ * fall back to the local estimate (`estimatedPrice`) with the reason.
+ */
+export async function hellofreshPrice(
+  client: HelloFreshClient,
+  account: Account,
+  input: PriceInput,
+  now: number,
+): Promise<HelloFreshPrice> {
+  const s = account.subscription;
+  const deliveryOption = input.deliveryOption ?? s.deliveryOption?.handle;
+  const needed: Record<string, unknown> = {
+    'customer id': s.customer?.id,
+    postcode: s.shippingAddress?.postcode,
+    'box SKU': input.sku,
+    servings: input.people,
+    'delivery option': deliveryOption,
+  };
+  const missing = Object.keys(needed).filter((k) => needed[k] === undefined || needed[k] === '');
+  if (missing.length > 0) throw new McpToolError(`HelloFresh returned no ${missing.join(', ')}, which its price calculator needs.`);
+  const price = await client.calculatePrice({
+    customerId: s.customer!.id!,
+    subscriptionId: account.subscriptionId,
+    couponCode: s.couponCode ?? '',
+    postcode: s.shippingAddress!.postcode!,
+    customerPlanId: await customerPlanIdOf(client, account),
+    sku: input.sku!,
+    week: input.week,
+    deliveryOption: deliveryOption!,
+    recipeIndexes: input.recipeIndexes,
+    isFirstOrder: input.week === s.firstDeliveryWeek,
+    // An upcoming box (no date: it is on the upcoming list, so assume so).
+    isFutureWeek: input.deliveryDate ? Date.parse(input.deliveryDate) > now : true,
+    boxSize: input.people!,
+  });
+  if (input.premiumCents === undefined) return { source: 'hellofresh', ...price, note: PREMIUM_UNKNOWN_NOTE };
+  const premiumUpcharge = input.premiumCents / 100;
+  return {
+    source: 'hellofresh',
+    ...price,
+    premiumUpcharge,
+    totalWithPremiums: roundCents(price.grandTotal! + premiumUpcharge),
+    note: PREMIUM_NOTE,
+  };
+}
+
+/** The local estimate, labelled as the fallback it is, with why HelloFresh's price could not be used. */
+export function estimatedPrice(estimate: NumberedEstimate, reason: string, full: boolean) {
+  return {
+    source: 'estimate' as const,
+    reason: `HelloFresh’s price calculator could not be used (${reason}), so this is a local estimate.`,
+    ...(full ? estimate : compactEstimate(estimate)),
   };
 }
 

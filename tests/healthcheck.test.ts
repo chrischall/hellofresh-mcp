@@ -90,6 +90,9 @@ async function run(opts: {
     close: async () => {},
     readAuthCookie: opts.cookie ?? (async () => encodeAuthCookie(tokenSet())),
     writeAuthCookie: opts.write ?? (async () => {}),
+    fetchInTab: async () => {
+      throw new Error('the healthcheck makes no in-tab fetch');
+    },
     healthTransport: async () => fakeHealthTransport(),
   };
   const session = new HelloFreshSession({ bridge, fetchImpl, now: () => NOW_S * 1000 });

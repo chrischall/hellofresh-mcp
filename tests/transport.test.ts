@@ -10,6 +10,7 @@ function fakeServer(listen: () => Promise<void> = async () => {}) {
     readCookies: vi.fn(async (_opts?: unknown) => ''),
     writeCookies: vi.fn(async (_opts: unknown): Promise<string[]> => ['apiV2Auth']),
     runProbe: vi.fn(async () => ({ ok: true, elapsed_ms: 1, bridge: {} })),
+    request: vi.fn(async (_method: string, _path: string, _opts?: unknown) => ({ status: 200, body: '{"a":1}', url: '' })),
     role: null,
   };
 }
@@ -44,6 +45,38 @@ describe('createHelloFreshBridge', () => {
     // The refresh token rotates: the refreshed set must be written back, so the
     // write verb is declared at pair time alongside the read.
     expect(opts.capabilities).toContain('write_cookies');
+    // The in-tab fetch (hf price) rides the `fetch` capability the bootstrap already declares.
+    expect(opts.capabilities).toContain('fetch');
+  });
+
+  it('fetchInTab relays the request through the www.hellofresh.com tab and returns status + body', async () => {
+    const server = fakeServer();
+    server.request.mockResolvedValueOnce({ status: 403, body: '<html>', url: 'https://www.hellofresh.com/gw/calculate' });
+    const bridge = bridgeWith(server);
+    await expect(
+      bridge.fetchInTab({
+        method: 'POST',
+        url: 'https://www.hellofresh.com/gw/calculate',
+        headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+        body: '{"x":1}',
+        retryOnTimeout: true,
+      }),
+    ).resolves.toEqual({ status: 403, body: '<html>' });
+    expect(server.request).toHaveBeenCalledWith('POST', 'https://www.hellofresh.com/gw/calculate', {
+      headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+      body: '{"x":1}',
+      retryOnTimeout: true,
+    });
+  });
+
+  it('fetchInTab without a body or retry flag sends neither', async () => {
+    const server = fakeServer();
+    const bridge = bridgeWith(server);
+    await expect(bridge.fetchInTab({ method: 'GET', url: 'https://www.hellofresh.com/x', headers: {} })).resolves.toEqual({
+      status: 200,
+      body: '{"a":1}',
+    });
+    expect(server.request).toHaveBeenCalledWith('GET', 'https://www.hellofresh.com/x', { headers: {} });
   });
 
   it('readAuthCookie reads ONLY apiV2Auth on www.hellofresh.com and returns its raw value', async () => {

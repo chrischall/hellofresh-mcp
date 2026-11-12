@@ -275,16 +275,29 @@ export interface SummaryInput {
   deliveryDate: string | undefined;
   picks: ReadonlyArray<{ name?: string }>;
   estimate: { totalCents: number; discountCents: number; voucher?: { code?: string } } | undefined;
+  /** HelloFresh's own price (US dollars) — wins over `estimate` when present. */
+  price?: { grandTotal: number; discount?: number; couponCode?: string; premiumUpcharge?: number; totalWithPremiums?: number };
+}
+
+const usd = (amount: number) => `$${amount.toFixed(2)}`;
+
+function priceLine(p: NonNullable<SummaryInput['price']>): string {
+  const discount = p.discount ? `−${usd(p.discount)}${p.couponCode ? ` ${p.couponCode}` : ''}` : 'no discount';
+  if (p.totalWithPremiums === undefined) return `Box total ${usd(p.grandTotal)} (HelloFresh price, premiums not included; ${discount}).`;
+  const source = p.premiumUpcharge ? `HelloFresh price ${usd(p.grandTotal)} + ${usd(p.premiumUpcharge)} premiums` : 'HelloFresh price';
+  return `Box total ${usd(p.totalWithPremiums)} (${source}; ${discount}).`;
 }
 
 /**
  * The approval line:
  * `Family week (4 servings) — delivering Mon 11/30: <A> + <B>. Est. box total $X (−$Y CODE).`
  */
-export function summaryText({ profile, people, deliveryDate, picks, estimate }: SummaryInput): string {
+export function summaryText({ profile, people, deliveryDate, picks, estimate, price }: SummaryInput): string {
   const meals = picks.length > 0 ? picks.map((p) => p.name?.trim() || '(unnamed meal)').join(' + ') : 'no picks fit';
   let total = 'Box total not estimated.';
-  if (estimate) {
+  if (price) {
+    total = priceLine(price);
+  } else if (estimate) {
     const discount =
       estimate.discountCents > 0
         ? `−${dollars(estimate.discountCents)}${estimate.voucher?.code ? ` ${estimate.voucher.code}` : ''}`

@@ -8,9 +8,10 @@ import { HelloFreshSession } from './session.js';
 import { createHelloFreshBridge } from './transport.js';
 import { VERSION } from './version.js';
 
-// The bridge only bootstraps the session: it reads (and refreshes) the
-// apiV2Auth cookie through the signed-in www.hellofresh.com tab. Every API
-// call is a plain Node fetch with a Bearer token.
+// The bridge bootstraps the session: it reads (and refreshes) the apiV2Auth
+// cookie through the signed-in www.hellofresh.com tab. Every API call is a
+// plain Node fetch with a Bearer token — except the price calculator, which
+// Cloudflare refuses from Node, so it runs as an in-tab fetch (`tabFetch`).
 const bridge = createHelloFreshBridge({ port: readWsPort(), version: VERSION });
 // start() loads the fetchproxy identity (no port bind — that is lazy). A
 // failure is NOT fatal: the next use retries the start (and throws its error
@@ -25,7 +26,7 @@ const deps: ToolDeps = {
   bridge,
   session,
   fetchImpl,
-  client: new HelloFreshClient({ session, fetchImpl }),
+  client: new HelloFreshClient({ session, fetchImpl, tabFetch: (req) => bridge.fetchInTab(req) }),
   // Planner profiles load on first use: a malformed config is a tool error, never a boot failure.
   profiles: createProfileStore(),
 };

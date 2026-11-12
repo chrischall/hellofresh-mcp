@@ -12,6 +12,7 @@ export function offlineDeps(): ToolDeps {
     close: async () => {},
     readAuthCookie: offline,
     writeAuthCookie: offline,
+    fetchInTab: offline,
     healthTransport: offline,
   };
   const fetchImpl = offline as unknown as typeof fetch;

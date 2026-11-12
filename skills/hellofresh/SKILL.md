@@ -37,10 +37,10 @@ means the browser may be signed out: same remedy.
 ## Reading
 
 - `hf_list_deliveries` — the next ~7 weeks: week (`2026-W49`), delivery date,
-  cutoff, status (`running`, `skipped`, `delivered`), box size and an estimated
-  total with the voucher discount. `view: "brief"` = one line per week. Start here.
+  cutoff, status (`running`, `skipped`, `delivered`), box size and each running
+  week's box `price`. `view: "brief"` = one line per week. Start here.
 - `hf_get_delivery` `{week}` — one week in detail: current picks, allowed actions,
-  the other delivery days offered that week (`oneOffDaySlots`), the estimate.
+  the other delivery days offered that week (`oneOffDaySlots`), the box `price`.
 - `hf_get_menu` `{week}` — the menu at that week's box size. Filters:
   `seafood_only`, `kid_friendly`, `max_minutes`, `max_premium_per_serving`,
   `selected_only`. Each meal has a menu `index` (what the writes take), its
@@ -52,8 +52,11 @@ means the browser may be signed out: same remedy.
   repeats; it names any week it could not read.
 
 Reads take `view`: `compact` (default) is enough to decide; ask for `full` only
-for a field compact leaves out. Prices are estimates: HelloFresh has no single
-"box total" read, and premiums multiply by servings.
+for a field compact leaves out. A `price` with `source: "hellofresh"` is
+HelloFresh's own checkout total in dollars (voucher, shipping, tax applied); it
+leaves premium meals out, so quote `totalWithPremiums` (premiums are in
+`premiumUpcharge`). `source: "estimate"` is a local fallback in cents — say it
+is an estimate, and why (`reason`).
 
 ## Planner profiles
 
@@ -93,7 +96,7 @@ One box a week. For the next week still before its cutoff:
      ask whether to skip the week before planning it.
 2. `hf_weekly_plan` `{week, profile}` — one read: the box size the week needs
    versus what it has, the suggested picks with 1–2 alternates each, the
-   estimated total and discount, a voucher warning, a one-line summary, and the
+   box price (HelloFresh's, or a labelled estimate), a one-line summary, and the
    exact write calls to make next. (`hf_suggest_meals` gives just the ranked
    picks with reasons; it skips recipes picked in the profile's recent weeks.)
    Pass `people` to override the profile's servings for one week. Every pick

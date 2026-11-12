@@ -27,15 +27,18 @@ import { shiftWeek } from '../weeks.js';
 import type { HelloFreshClient } from '../client.js';
 import { foodMeta } from './hints.js';
 import {
+  attempt,
   boxNumbering,
   boxNumbers,
   compactEstimate,
   compactSelection,
   dateOf,
   estimateFor,
+  hellofreshPrice,
   isUnresizableFirstBox,
   loadAccount,
   nextBoxNumberParam,
+  premiumCentsOf,
   readMenu,
   readPicks,
   weekParam,
@@ -186,6 +189,39 @@ function priceFor(
   return undefined;
 }
 
+/**
+ * The local estimate for `sku` (the fallback when HelloFresh's price cannot be
+ * read): the upcoming list prices the size and numbers the box, as if the week
+ * runs (an unskip makes it count).
+ */
+async function localEstimate(
+  client: HelloFreshClient,
+  account: Account,
+  delivery: ProjectedDelivery,
+  sku: string,
+  picks: ReadonlyArray<{ premiumBoxCents: number }>,
+  args: { week: string; box_number?: number; next_box_number?: number },
+) {
+  const upcoming = ((await client.listDeliveries()).items ?? []).map(projectDelivery);
+  const numbering = boxNumbering(account.subscription, args.next_box_number);
+  const boxNumber =
+    args.box_number ??
+    boxNumbers(
+      upcoming.map((d) => (d.week === args.week ? { ...d, status: 'running' as const } : d)),
+      numbering.next,
+    ).get(args.week);
+  const price = priceFor(sku, delivery, upcoming, account);
+  const estimate = price
+    ? estimateFor(
+        { ...delivery, ...price },
+        picks.map((p) => ({ premiumBoxCents: p.premiumBoxCents, quantity: 1 })),
+        account,
+        boxNumber,
+      )
+    : undefined;
+  return { estimate, priceFrom: price?.priceFrom, numberingNote: numbering.note };
+}
+
 /** Why the week can no longer be changed, if it cannot. */
 function lockedReason(delivery: ProjectedDelivery, week: string, now: number): string | undefined {
   if (delivery.status !== 'running' && delivery.status !== 'skipped') return `${week} is ${delivery.status}: it can no longer be changed.`;
@@ -264,8 +300,9 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
     {
       description:
         'Plan one HelloFresh delivery week for a planner profile (hf_list_profiles — e.g. a 4-person family week) in ' +
-        'one read: the box size the week needs versus what it has, suggested picks with alternates, the estimated ' +
-        'box total with the voucher discount (and a warning when the voucher stops applying), a one-line summary ' +
+        'one read: the box size the week needs versus what it has, suggested picks with alternates, the box price ' +
+        '(HelloFresh’s own checkout total for that size plus the picks’ premium upcharge, or a labelled local ' +
+        'estimate when that cannot be read), a one-line summary ' +
         'for the user to approve, and the exact follow-up write calls (hf_unskip_week, hf_set_week_size, ' +
         'hf_select_meals) in order. The subscription’s first box cannot be resized, so for it no size change is ' +
         'proposed (notes say so). Read-only: it changes nothing.',
@@ -279,7 +316,10 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
           .min(1)
           .max(1000)
           .optional()
-          .describe('This box’s number, counting every box ever delivered — overrides the number derived from next_box_number.'),
+          .describe(
+            'This box’s number, counting every box ever delivered — overrides the number derived from next_box_number. ' +
+              'Only used by the local estimate (when HelloFresh’s price cannot be read).',
+          ),
         next_box_number: nextBoxNumberParam,
       }),
     },
@@ -287,9 +327,7 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
       const { week } = args;
       const profile = profileFor(args.profile);
       const account = await loadAccount(client);
-      const [raw, list] = await Promise.all([client.getDelivery(account.subscriptionId, week), client.listDeliveries()]);
-      const delivery = projectDelivery(raw);
-      const upcoming = (list.items ?? []).map(projectDelivery);
+      const delivery = projectDelivery(await client.getDelivery(account.subscriptionId, week));
       // The first box cannot be resized (a HelloFresh rule): plan for the box as it is, and say so.
       const wanted = profileSku(profile, args.people ?? profile.people);
       const firstBoxFixed = isUnresizableFirstBox(account.subscription, week) && !!delivery.sku && !!delivery.servings && !!delivery.meals;
@@ -310,23 +348,44 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
       const skipped = delivery.status === 'skipped';
       const locked = lockedReason(delivery, week, now());
 
-      // Box number as if the week runs (an unskip makes it count).
-      const numbering = boxNumbering(account.subscription, args.next_box_number);
-      const boxNumber =
-        args.box_number ??
-        boxNumbers(
-          upcoming.map((d) => (d.week === week ? { ...d, status: 'running' as const } : d)),
-          numbering.next,
-        ).get(week);
-      const price = priceFor(sku, delivery, upcoming, account);
-      const estimate = price
-        ? estimateFor(
-            { ...delivery, ...price },
-            picks.map((p) => ({ premiumBoxCents: p.premiumBoxCents, quantity: 1 })),
-            account,
-            boxNumber,
-          )
-        : undefined;
+      // HelloFresh's own price for the box the plan needs, with the picks; else the local estimate.
+      const real = await attempt(() =>
+        hellofreshPrice(
+          client,
+          account,
+          {
+            week,
+            sku,
+            people,
+            deliveryOption: delivery.deliveryOption,
+            deliveryDate: delivery.deliveryDate,
+            recipeIndexes: picks.map((p) => p.index),
+            premiumCents: premiumCentsOf(picks),
+          },
+          now(),
+        ),
+      );
+      let estimate: Awaited<ReturnType<typeof localEstimate>>['estimate'];
+      let priceFields: Record<string, unknown>;
+      if (real.ok) {
+        priceFields = { price: real.value };
+      } else {
+        const local = await localEstimate(client, account, delivery, sku, picks, args);
+        estimate = local.estimate;
+        const why = `HelloFresh’s price calculator could not be used (${real.reason})`;
+        priceFields = estimate
+          ? {
+              price: {
+                source: 'estimate' as const,
+                reason: `${why}, so this is a local estimate.`,
+                ...compactEstimate(estimate),
+                ...(estimate.voucher ? { voucher: estimate.voucher.code } : {}),
+                priceFrom: local.priceFrom,
+              },
+              ...(args.box_number === undefined ? { boxNumberNote: local.numberingNote } : {}),
+            }
+          : { priceWarning: `${why}, and HelloFresh shows no price for ${sku} on this account, so the box total is not estimated.` };
+      }
 
       const chosen = new Set(picks.map((p) => p.index));
       const alreadyPicked =
@@ -362,11 +421,15 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
         box: { current: delivery.sku, required: sku, sizeChangeNeeded },
         currentPicks: menu.selected.map(compactSelection),
         ...suggestionFields(suggestion),
-        ...(estimate
-          ? { estimate: { ...compactEstimate(estimate), ...(estimate.voucher ? { voucher: estimate.voucher.code } : {}), priceFrom: price!.priceFrom } }
-          : { estimateWarning: `HelloFresh shows no price for ${sku} on this account, so the box total is not estimated.` }),
-        ...(estimate && args.box_number === undefined ? { boxNumberNote: numbering.note } : {}),
-        summary: summaryText({ profile, people, deliveryDate: delivery.deliveryDate, picks, estimate }),
+        ...priceFields,
+        summary: summaryText({
+          profile,
+          people,
+          deliveryDate: delivery.deliveryDate,
+          picks,
+          estimate,
+          ...(real.ok ? { price: { ...real.value, grandTotal: real.value.grandTotal! } } : {}),
+        }),
         ...(locked ? { locked } : {}),
         ...(alreadyPicked ? { note: 'The suggested meals are already picked for this week; nothing to change.' } : {}),
         ...(notes.length > 0 ? { notes } : {}),

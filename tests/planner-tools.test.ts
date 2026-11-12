@@ -66,22 +66,34 @@ async function call(
   profiles: () => LoadedProfiles = () => PROFILES,
 ) {
   const urls: URL[] = [];
+  const tabBodies: Any[] = [];
   const all = [...routes, ...defaultRoutes()];
-  const fetchImpl = (async (input: string, init?: RequestInit) => {
-    const url = new URL(input);
-    urls.push(url);
-    if ((init?.method ?? 'GET') !== 'GET') throw new Error(`planner sent a ${init?.method}`);
+  const route = async (url: URL): Promise<Response> => {
     const hit = all.find(([re]) => re.test(url.pathname));
     if (!hit) return json({ error: 'not found' }, 404);
     const [, h] = hit;
     return typeof h === 'function' ? (h as Handler)(url) : json(h);
+  };
+  const fetchImpl = (async (input: string, init?: RequestInit) => {
+    const url = new URL(input);
+    urls.push(url);
+    if ((init?.method ?? 'GET') !== 'GET') throw new Error(`planner sent a ${init?.method}`);
+    return route(url);
   }) as unknown as typeof fetch;
+  // The bridge's in-tab fetch — only the side-effect-free price calculator may come through it.
+  const tabFetch = async (req: { method: string; url: string; body?: string }) => {
+    const url = new URL(req.url);
+    if (req.method !== 'POST' || url.pathname !== '/gw/calculate') throw new Error(`planner sent ${req.method} ${url.pathname} in-tab`);
+    tabBodies.push(JSON.parse(req.body!));
+    const res = await route(url);
+    return { status: res.status, body: await res.text() };
+  };
   const session: ClientSession = { withAuth: (c) => c('tok'), redact: (t) => t };
-  const deps: ToolDeps = { ...offlineDeps(), client: new HelloFreshClient({ session, fetchImpl }), now: () => now, profiles };
+  const deps: ToolDeps = { ...offlineDeps(), client: new HelloFreshClient({ session, fetchImpl, tabFetch }), now: () => now, profiles };
   await harness?.close();
   harness = await createTestHarness((server) => registerPlannerTools(server, deps));
   const result = await harness.callTool(name, args);
-  return { result, urls, text: (result.content as { text: string }[])[0]!.text, out: result.isError ? undefined : parseToolResult<Any>(result as CallToolResult) };
+  return { result, urls, tabBodies, text: (result.content as { text: string }[])[0]!.text, out: result.isError ? undefined : parseToolResult<Any>(result as CallToolResult) };
 }
 
 /** Test profiles: a 6-person kid-friendly seafood family (the fixture box is 2 × 6) and a 2-person adventurous couple. */
@@ -232,14 +244,65 @@ describe('hf_suggest_meals', () => {
 });
 
 describe('hf_weekly_plan', () => {
-  it('a family week at the right size: picks, estimate with the voucher, the summary and one select call', async () => {
+  /** A synthetic calculator answer (ids + address included, as the real one). */
+  const CALC = {
+    grandTotal: 21.41,
+    subTotal: 59.96,
+    taxAmount: 0.42,
+    shippingAmount: 12.99,
+    shippingDiscountAmount: 12.99,
+    discountAmount: 51.96,
+    couponCode: 'EXAMPLE65',
+    currency: 'USD',
+    customerID: 12345678,
+    subscriptionID: 90000001,
+    shippingAddress: { postcode: '00000', address1: '123 Example St' },
+    products: [{ handle: 'US-CBU-2-2-0', couponPercent: 65, couponCode: 'EXAMPLE65', charges: null }],
+  };
+  const CALC_ROUTE: Route = [/\/gw\/calculate$/, CALC];
+
+  it('HelloFresh’s price for the size the plan NEEDS with the suggested picks, premiums added; no upcoming-list read', async () => {
+    const { out, urls, tabBodies, text } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'couple', avoid_recent_weeks: 0 }, [
+      CALC_ROUTE,
+    ]);
+    expect(urls.some((u) => u.pathname.endsWith('/customers/me/deliveries'))).toBe(false);
+    expect(tabBodies).toHaveLength(1);
+    expect(tabBodies[0]).toMatchObject({
+      boxSize: 2,
+      weekId: '2026-W49',
+      products: [{ handle: 'US-CBU-2-2-0', hfWeek: '2026-W49', recipeIndexes: out.picks.map((p: Any) => String(p.index)) }],
+    });
+    const premiums = out.picks.reduce((sum: number, p: Any) => sum + (p.premiumBoxCents ?? 0), 0) / 100;
+    expect(out.price).toEqual({
+      source: 'hellofresh',
+      grandTotal: 21.41,
+      subTotal: 59.96,
+      discount: 51.96,
+      shipping: 12.99,
+      shippingDiscount: 12.99,
+      tax: 0.42,
+      couponPercent: 65,
+      couponCode: 'EXAMPLE65',
+      currency: 'USD',
+      premiumUpcharge: premiums,
+      totalWithPremiums: Math.round((21.41 + premiums) * 100) / 100,
+      note: expect.stringMatching(/leaves premium recipe charges out/),
+    });
+    expect(out.boxNumberNote).toBeUndefined();
+    expect(out.summary).toMatch(/Box total \$\d+\.\d\d \(HelloFresh price.*−\$51\.96 EXAMPLE65\)\.$/);
+    expect(text).not.toMatch(/12345678|Example St|"00000"/);
+  });
+
+  it('a family week at the right size, calculator unavailable: picks, a labelled estimate, the summary and one select call', async () => {
     const { out, urls } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family' });
     expect(out.box).toEqual({ current: 'US-CBU-2-6-0', required: 'US-CBU-2-6-0', sizeChangeNeeded: false });
     expect(out.delivery).toEqual({ deliveryDate: '2026-11-30', cutoffDate: '2026-11-25T23:59:59-05:00', status: 'running' });
     expect(out.currentPicks.map((p: Any) => p.index)).toEqual([67, 71]);
     expect(out.picks.map((p: Any) => p.index)).toEqual([53, 30]);
     // 14748 + 1299 fee; box 2 = 15 % of the product price (2212).
-    expect(out.estimate).toEqual({
+    expect(out.price).toEqual({
+      source: 'estimate',
+      reason: expect.stringMatching(/price calculator could not be used \(.*404.*\), so this is a local estimate/),
       boxNumber: 2,
       subtotalCents: 16047,
       discountCents: 2212,
@@ -270,7 +333,7 @@ describe('hf_weekly_plan', () => {
       why: '2026-W49 is US-CBU-2-6-0; the couple profile needs US-CBU-2-2-0.',
     });
     const premiums = out.picks.reduce((sum: number, p: Any) => sum + (p.premiumBoxCents ?? 0), 0);
-    expect(out.estimate).toMatchObject({ subtotalCents: 5996 + 1299 + premiums, discountCents: 899, priceFrom: '2026-W50 (same box size)' });
+    expect(out.price).toMatchObject({ subtotalCents: 5996 + 1299 + premiums, discountCents: 899, priceFrom: '2026-W50 (same box size)' });
     expect(out.summary).toMatch(/^Couple week \(2 servings\) — delivering Mon 11\/30: .+ \+ .+\. Est\. box total \$\d+\.\d\d \(−\$8\.99 EXAMPLE65\)\.$/);
   });
 
@@ -318,33 +381,33 @@ describe('hf_weekly_plan', () => {
     expect(out.followUp.map((f: Any) => f.tool)).toEqual(['hf_unskip_week', 'hf_set_week_size', 'hf_select_meals']);
     expect(out.followUp[0]).toEqual({ tool: 'hf_unskip_week', arguments: { week: '2026-W50' }, why: '2026-W50 is skipped.' });
     // No upcoming 6-person week: the plan's own unit price.
-    expect(out.estimate).toMatchObject({ boxNumber: 2, subtotalCents: 14748 + 1299, priceFrom: 'the plan price' });
+    expect(out.price).toMatchObject({ boxNumber: 2, subtotalCents: 14748 + 1299, priceFrom: 'the plan price' });
   });
 
   it('no price for the needed size → no estimate, said plainly', async () => {
     const { out } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'couple', avoid_recent_weeks: 0 }, [
       [/deliveries$/, { items: [W49] }],
     ]);
-    expect(out.estimate).toBeUndefined();
-    expect(out.estimateWarning).toMatch(/no price for US-CBU-2-2-0/);
+    expect(out.price).toBeUndefined();
+    expect(out.priceWarning).toMatch(/price calculator could not be used.*no price for US-CBU-2-2-0/);
     expect(out.summary).toMatch(/Box total not estimated\.$/);
   });
 
   it('a week outside the upcoming list: undiscounted unless box_number is given', async () => {
     const routes: Route[] = [[/deliveries$/, { count: 0 }]];
     const plain = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, routes);
-    expect(plain.out.estimate.discountCents).toBe(0);
-    expect(plain.out.estimate.warning).toMatch(/box number/);
+    expect(plain.out.price.discountCents).toBe(0);
+    expect(plain.out.price.warning).toMatch(/box number/);
     expect(plain.out.summary).toMatch(/\(no voucher discount\)\.$/);
     const numbered = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0, box_number: 1 }, routes);
-    expect(numbered.out.estimate).toMatchObject({ boxNumber: 1, discountCents: Math.round((14748 + 1299) * 0.65) });
+    expect(numbered.out.price).toMatchObject({ boxNumber: 1, discountCents: Math.round((14748 + 1299) * 0.65) });
   });
 
   it('next_box_number shifts the voucher’s box', async () => {
     const { out } = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0, next_box_number: 60 });
-    expect(out.estimate.boxNumber).toBe(60);
-    expect(out.estimate.warning).toMatch(/covers boxes 1–52/);
-    expect(out.estimate.voucher).toBeUndefined();
+    expect(out.price.boxNumber).toBe(60);
+    expect(out.price.warning).toMatch(/covers boxes 1–52/);
+    expect(out.price.voucher).toBeUndefined();
   });
 
   it('first box not yet delivered: numbered from box 1 over running weeks, a planned skipped week counting as running', async () => {
@@ -355,17 +418,17 @@ describe('hf_weekly_plan', () => {
       [/\/delivery_dates\/2026-W51$/, W51],
     ];
     const w49 = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, routes);
-    expect(w49.out.estimate).toMatchObject({ boxNumber: 1, discountCents: Math.round((14748 + 1299) * 0.65) });
+    expect(w49.out.price).toMatchObject({ boxNumber: 1, discountCents: Math.round((14748 + 1299) * 0.65) });
     expect(w49.out.boxNumberNote).toMatch(/first box is not delivered yet/);
     // W50 is skipped, so W51 is box 2 …
     const w51 = await call('hf_weekly_plan', { week: '2026-W51', profile: 'family', avoid_recent_weeks: 0 }, routes);
-    expect(w51.out.estimate.boxNumber).toBe(2);
+    expect(w51.out.price.boxNumber).toBe(2);
     // … unless the plan unskips W50, which then is box 2.
     const w50 = await call('hf_weekly_plan', { week: '2026-W50', profile: 'family', avoid_recent_weeks: 0 }, routes);
-    expect(w50.out.estimate.boxNumber).toBe(2);
+    expect(w50.out.price.boxNumber).toBe(2);
     // An explicit box_number needs no note.
     const given = await call('hf_weekly_plan', { week: '2026-W51', profile: 'family', avoid_recent_weeks: 0, box_number: 7 }, routes);
-    expect(given.out.estimate.boxNumber).toBe(7);
+    expect(given.out.price.boxNumber).toBe(7);
     expect(given.out.boxNumberNote).toBeUndefined();
   });
 

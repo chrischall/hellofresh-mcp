@@ -92,11 +92,11 @@
     },
     {
       "name": "hf_list_deliveries",
-      "description": "List upcoming delivery weeks: dates, cutoff, status, box size and an estimated total with the voucher discount (brief view: one line per week)."
+      "description": "List upcoming delivery weeks: dates, cutoff, status, box size and each running week's box price — HelloFresh's checkout total plus premiums, or a labelled estimate (brief view: one line per week)."
     },
     {
       "name": "hf_get_delivery",
-      "description": "Read one delivery week: dates, status, box size, current meal picks, allowed actions, alternative days and an estimated total including premiums."
+      "description": "Read one delivery week: dates, status, box size, current meal picks, allowed actions, alternative days and the box price — HelloFresh's checkout total plus premiums, or a labelled estimate."
     },
     {
       "name": "hf_get_menu",
@@ -148,7 +148,7 @@
     },
     {
       "name": "hf_weekly_plan",
-      "description": "Plan a delivery week for a planner profile: box size needed, suggested picks, estimated total, approval summary and the follow-up writes; read-only."
+      "description": "Plan a delivery week for a planner profile: box size needed, suggested picks, box price, approval summary and the follow-up writes; read-only."
     }
   ],
   "compatibility": {

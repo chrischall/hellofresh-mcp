@@ -284,6 +284,23 @@ describe('summary text', () => {
     ).toBe('Couple week (2 servings) — delivering Mon 12/7: A. Est. box total $1.00 (−$0.05).');
   });
 
+  it('a HelloFresh price wins over the estimate: its total with premiums, discount and coupon', () => {
+    const base = { profile: FAMILY, deliveryDate: '2026-11-30T00:00:00-05:00', picks, estimate: { totalCents: 1, discountCents: 1 } };
+    expect(
+      summaryText({ ...base, price: { grandTotal: 52.65, discount: 108.85, couponCode: 'EXAMPLE65', premiumUpcharge: 0, totalWithPremiums: 52.65 } }),
+    ).toMatch(/: Garlicky Shrimp Couscous Bowls \+ Pesto Salmon Linguine\. Box total \$52\.65 \(HelloFresh price; −\$108\.85 EXAMPLE65\)\.$/);
+    expect(
+      summaryText({ ...base, price: { grandTotal: 52.65, discount: 0, premiumUpcharge: 17.94, totalWithPremiums: 70.59 } }),
+    ).toMatch(/Box total \$70\.59 \(HelloFresh price \$52\.65 \+ \$17\.94 premiums; no discount\)\.$/);
+    expect(summaryText({ ...base, price: { grandTotal: 40, discount: 5, totalWithPremiums: 40 } })).toMatch(
+      /Box total \$40\.00 \(HelloFresh price; −\$5\.00\)\.$/,
+    );
+    // Premiums unknown (menu unread): HelloFresh's total alone, flagged.
+    expect(summaryText({ ...base, price: { grandTotal: 21.41 } })).toMatch(
+      /Box total \$21\.41 \(HelloFresh price, premiums not included; no discount\)\.$/,
+    );
+  });
+
   it('helpers', () => {
     expect(dollars(0)).toBe('$0.00');
     expect(dollars(14748)).toBe('$147.48');

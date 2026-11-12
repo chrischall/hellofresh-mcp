@@ -6,7 +6,7 @@
 
 import { z } from 'zod';
 import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
-import { minifiedResult, resolveView, todayIso, toolAnnotations } from '@chrischall/mcp-utils';
+import { mapWithConcurrency, minifiedResult, resolveView, todayIso, toolAnnotations } from '@chrischall/mcp-utils';
 import {
   parseSku,
   projectDelivery,
@@ -14,24 +14,29 @@ import {
   type ProjectedDelivery,
   type ProjectedMeal,
   type ProjectedVariant,
+  type SelectedMeal,
 } from '../normalize.js';
 import { isoWeekOf, shiftWeek } from '../weeks.js';
 import type { RawSubscription } from '../types.js';
 import { LOOKUP, foodMeta } from './hints.js';
 import {
   HF_VIEWS,
+  PRICE_CONCURRENCY,
   attempt,
+  type Account,
   boxNumbering,
   boxNumbers,
   briefLine,
   byWeek,
-  compactEstimate,
   compactSelection,
   dateOf,
   estimateFor,
+  estimatedPrice,
+  hellofreshPrice,
   hfView,
   loadAccount,
   nextBoxNumberParam,
+  premiumCentsOf,
   readMenu,
   readPicks,
   weekParam,
@@ -160,13 +165,49 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
     },
   );
 
+  /** HelloFresh's price for a running week's box (its picks' premiums added), else the labelled local estimate. */
+  async function priceWeek(
+    account: Account,
+    delivery: ProjectedDelivery,
+    week: string,
+    selection: SelectedMeal[] | undefined,
+    full: boolean,
+    fallbackBoxNumber: () => Promise<number | undefined>,
+  ) {
+    const real = await attempt(() =>
+      hellofreshPrice(
+        client,
+        account,
+        {
+          week,
+          sku: delivery.sku,
+          people: delivery.servings,
+          deliveryOption: delivery.deliveryOption,
+          deliveryDate: delivery.deliveryDate,
+          recipeIndexes: (selection ?? []).map((m) => m.index),
+          premiumCents: selection ? premiumCentsOf(selection) : undefined,
+        },
+        now(),
+      ),
+    );
+    if (real.ok) return real.value;
+    const estimate = estimateFor(delivery, selection ?? [], account, await fallbackBoxNumber());
+    if (!selection) {
+      const note = 'The menu could not be read, so premium upcharges are not included.';
+      estimate.warning = estimate.warning ? `${estimate.warning} ${note}` : note;
+    }
+    return estimatedPrice(estimate, real.reason, full);
+  }
+
   server.registerTool(
     'hf_list_deliveries',
     {
       description:
         'List upcoming HelloFresh deliveries (about the next 7 weeks): each week’s delivery date, meal-pick cutoff, ' +
-        'status (running, skipped, delivered), box size and an estimated box total with the voucher discount. ' +
-        'Answers "what HelloFresh boxes are coming?" — view "brief" gives one line per week.',
+        'status (running, skipped, delivered), box size and, for running weeks, the box price — HelloFresh’s own ' +
+        'checkout total (voucher, shipping and tax applied) plus the picked meals’ premium upcharge, or a labelled ' +
+        'local estimate when that cannot be read. Answers "what HelloFresh boxes are coming?" — view "brief" gives ' +
+        'one line per week (no prices).',
       annotations: readOnly('HelloFresh: list deliveries'),
       _meta: foodMeta('whats-on', {
         canonical: true,
@@ -177,9 +218,9 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
           .enum(['brief', 'compact', 'full'])
           .optional()
           .describe(
-            '"compact" (default): week, dates, status, box size and a short estimate. "brief": one line per week, ' +
-              '`2026-W49 — 2026-11-30 — running, 2×6, cutoff 11-25`. "full": every allowlisted delivery field ' +
-              '(allowed actions, alternative delivery-day slots) and the whole estimate.',
+            '"compact" (default): week, dates, status, box size and the price. "brief": one line per week, ' +
+              '`2026-W49 — 2026-11-30 — running, 2×6, cutoff 11-25`, no prices (no per-week calls). "full": every ' +
+              'allowlisted delivery field (allowed actions, alternative delivery-day slots) and, for an estimate, every estimate field.',
           ),
         next_box_number: nextBoxNumberParam,
       }),
@@ -194,17 +235,30 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
       const numbering = boxNumbering(account.subscription, next_box_number);
       const numbers = boxNumbers(deliveries, numbering.next);
       const full = view === 'full';
+      const running = deliveries.filter((d): d is ProjectedDelivery & { week: string } => d.status === 'running' && !!d.week);
+      const priced = new Map(
+        await mapWithConcurrency(running, PRICE_CONCURRENCY, async (d) => {
+          const menu = await attempt(() => readMenu(client, account, d, d.week));
+          const selection = menu.ok ? menu.value.selected : undefined;
+          const price = await priceWeek(account, d, d.week, selection, full, async () => numbers.get(d.week));
+          return [d.week, price] as const;
+        }),
+      );
+      const anyEstimate = [...priced.values()].some((p) => p.source === 'estimate');
       return minifiedResult({
         deliveries: deliveries.map((d) => {
-          const boxNumber = numbers.get(d.week!);
-          const estimate = boxNumber !== undefined ? estimateFor(d, [], account, boxNumber) : undefined;
           const base = full ? d : compactDelivery(d);
-          if (!estimate) return base;
-          return { ...base, estimate: full ? estimate : compactEstimate(estimate) };
+          const price = d.week ? priced.get(d.week) : undefined;
+          return price ? { ...base, price } : base;
         }),
-        estimateNote:
-          'Estimates (running weeks only) are product + fees + shipping minus the voucher, WITHOUT premium meal ' +
-          `upcharges (hf_get_delivery adds those). ${numbering.note}`,
+        ...(priced.size > 0
+          ? {
+              priceNote:
+                'price.source "hellofresh" is HelloFresh’s own checkout price (US dollars; premium upcharges reported ' +
+                'separately and added in totalWithPremiums); "estimate" is a local fallback in cents (product + fees + ' +
+                `shipping + premiums − voucher) used when the calculator could not be read.${anyEstimate ? ` ${numbering.note}` : ''}`,
+            }
+          : {}),
       });
     },
   );
@@ -214,8 +268,9 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
     {
       description:
         'Read one HelloFresh delivery week: delivery date and slot, meal-pick cutoff, status, box size, the meals ' +
-        'currently picked (with any premium upcharge), allowed actions, alternative delivery days, and an estimated ' +
-        'box total including premium upcharges and the voucher discount.',
+        'currently picked (with any premium upcharge), allowed actions, alternative delivery days, and the box price ' +
+        '— HelloFresh’s own checkout total plus the picked meals’ premium upcharge, or a labelled local estimate ' +
+        'when that cannot be read.',
       annotations: readOnly('HelloFresh: get delivery'),
       _meta: LOOKUP,
       inputSchema: z.object({
@@ -226,36 +281,32 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
           .min(1)
           .max(1000)
           .optional()
-          .describe('This box’s number, counting every box ever delivered — overrides the number derived from next_box_number.'),
+          .describe(
+            'This box’s number, counting every box ever delivered — overrides the number derived from next_box_number. ' +
+              'Only used by the local estimate (when HelloFresh’s price cannot be read).',
+          ),
         next_box_number: nextBoxNumberParam,
-        view: hfView('compact keeps the essentials; full adds every allowlisted field (prices, slot handle, sub-status) and the whole estimate.'),
+        view: hfView('compact keeps the essentials; full adds every allowlisted field (prices, slot handle, sub-status) and, for an estimate, every estimate field.'),
       }),
     },
     async ({ week, box_number, next_box_number, view }) => {
       const account = await loadAccount(client);
-      const [rawDelivery, upcoming] = await Promise.all([
-        client.getDelivery(account.subscriptionId, week),
-        client.listDeliveries(),
-      ]);
-      const delivery = projectDelivery(rawDelivery);
-      const running = delivery.status === 'running';
+      const delivery = projectDelivery(await client.getDelivery(account.subscriptionId, week));
       const menu = delivery.status === 'skipped' ? undefined : await attempt(() => readMenu(client, account, delivery, week));
-      const selection = menu?.ok ? menu.value.selected.map(compactSelection) : undefined;
-
-      let estimate;
-      let boxNumberNote: string | undefined;
-      if (running) {
-        const numbering = boxNumbering(account.subscription, next_box_number);
-        if (box_number === undefined) boxNumberNote = numbering.note;
-        const boxNumber = box_number ?? boxNumbers((upcoming.items ?? []).map(projectDelivery), numbering.next).get(week);
-        estimate = estimateFor(delivery, selection ?? [], account, boxNumber);
-        if (!selection) {
-          const note = 'The menu could not be read, so premium upcharges are not included.';
-          estimate.warning = estimate.warning ? `${estimate.warning} ${note}` : note;
-        }
-      }
-
+      const selected = menu?.ok ? menu.value.selected : undefined;
       const full = resolveView(view, HF_VIEWS) === 'full';
+
+      let boxNumberNote: string | undefined;
+      // The upcoming list is read only when the estimate needs a derived box number.
+      const fallbackBoxNumber = async () => {
+        if (box_number !== undefined) return box_number;
+        const numbering = boxNumbering(account.subscription, next_box_number);
+        boxNumberNote = numbering.note;
+        const upcoming = ((await client.listDeliveries()).items ?? []).map(projectDelivery);
+        return boxNumbers(upcoming, numbering.next).get(week);
+      };
+      const price = delivery.status === 'running' ? await priceWeek(account, delivery, week, selected, full, fallbackBoxNumber) : undefined;
+
       return minifiedResult({
         ...(full
           ? delivery
@@ -267,9 +318,9 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
               allowedActions: delivery.allowedActions,
               oneOffDaySlots: delivery.oneOffDaySlots,
             }),
-        ...(selection ? { selection } : {}),
+        ...(selected ? { selection: selected.map(compactSelection) } : {}),
         ...(menu && !menu.ok ? { selectionError: menu.reason } : {}),
-        ...(estimate ? { estimate: full ? estimate : compactEstimate(estimate) } : {}),
+        ...(price ? { price } : {}),
         ...(boxNumberNote ? { boxNumberNote } : {}),
       });
     },

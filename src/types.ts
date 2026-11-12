@@ -46,6 +46,8 @@ export interface RawSubscription {
   canceledAt?: string | null;
   isActive?: boolean;
   voucherInfo?: VoucherInfo | null;
+  /** Only the postcode is typed: the price calculator needs it. It is never returned. */
+  shippingAddress?: { postcode?: string } | null;
 }
 
 export interface RawDelivery {
@@ -138,4 +140,21 @@ export interface RawDeliveryMenu {
 export interface CartMeal {
   index: number;
   quantity: number;
+}
+
+/**
+ * `POST /gw/calculate`'s answer (US dollars). It also carries the customer and
+ * subscription ids and the shipping address — deliberately NOT typed here:
+ * `projectCalculation` keeps only the money fields.
+ */
+export interface RawCalculation {
+  grandTotal?: number;
+  subTotal?: number;
+  taxAmount?: number;
+  shippingAmount?: number;
+  shippingDiscountAmount?: number;
+  discountAmount?: number;
+  couponCode?: string | null;
+  currency?: string;
+  products?: Array<{ couponPercent?: number; couponCode?: string | null }> | null;
 }
