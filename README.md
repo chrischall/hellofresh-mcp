@@ -138,7 +138,7 @@ After sending, each write re-reads HelloFresh and reports `status: "verified"` o
 
 ## Tools
 
-Read tools take `view: compact | full` (default `compact`). A box `price` with `source: "hellofresh"` is HelloFresh's own checkout total (US dollars: voucher, shipping and tax applied) from its price calculator, read through the browser tab; that calculator leaves premium recipe charges out, so `premiumUpcharge` reports them separately and `totalWithPremiums` adds them. When the calculator cannot be read, `price` falls back to a local estimate (`source: "estimate"`, US cents, with the `reason`). Menu premiums are US cents and multiply by servings.
+Read tools take `view: compact | full` (default `compact`). A box `price` with `source: "hellofresh"` is HelloFresh's own checkout total (US dollars: voucher, shipping and tax applied) from its price calculator, read through the browser tab; that calculator leaves premium recipe charges out, so `premiumUpcharge` reports them separately and `totalWithPremiums` adds them. When the calculator cannot be read, `price` falls back to a local estimate (`source: "estimate"`, with the `reason`) in the same unit and field names: every `price` amount is US dollars whichever the source — `grandTotal` (premiums left out), `premiumUpcharge` and `totalWithPremiums`. A browser bridge that is down is tried once per call: later weeks in the same call go straight to the estimate with the same reason. Menu premiums (`premium*Cents` fields on meals and picks) are US cents and multiply by servings.
 
 
 | Tool | What it does |

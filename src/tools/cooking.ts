@@ -38,6 +38,17 @@ function locate(raw: RawDeliveryMenu, menu: ProjectedMenu, index: number) {
   return { meal, base: menu.meals.find((m) => m.index === index), variant: undefined };
 }
 
+/** A protein swap as hf_get_recipe names it: what it swaps in is the swap's title, else its own recipe name, else unsaid. */
+function swapOf(base: { index: number; name?: string }, variant: { title?: string; name?: string }) {
+  const swapsIn = variant.title?.trim() || variant.name?.trim();
+  return {
+    baseIndex: base.index,
+    baseName: base.name,
+    ...(variant.title ? { protein: variant.title } : {}),
+    note: `Protein swap of #${base.index} ${base.name}${swapsIn ? `: swaps in ${swapsIn}` : ''}.`,
+  };
+}
+
 function recipeIdOf(meal: RawMeal | undefined, index: number, week: string): string {
   const id = meal?.recipe?.id;
   if (!id) throw new McpToolError(`HelloFresh returned no recipe id for menu index ${index} in ${week}, so its recipe cannot be read.`);
@@ -83,16 +94,7 @@ export function registerCookingTools(server: McpServer, deps: ToolDeps): void {
         ...(quantity > 1
           ? { quantityNote: `This meal is picked ${quantity}× this week: multiply the amounts by ${quantity}.` }
           : {}),
-        ...(variant && base
-          ? {
-              swap: {
-                baseIndex: base.index,
-                baseName: base.name,
-                protein: variant.title,
-                note: `Protein swap of #${base.index} ${base.name}: swaps in ${variant.title}.`,
-              },
-            }
-          : {}),
+        ...(variant && base ? { swap: swapOf(base, variant) } : {}),
         recipe: projectRecipe(detail, servings),
       });
     },
@@ -124,17 +126,24 @@ export function registerCookingTools(server: McpServer, deps: ToolDeps): void {
         return fenced({ ...head, dishes: [], summary: `No meals are picked for ${week} yet — pick them with hf_select_meals.` });
       }
 
+      const servings = delivery.servings!; // readRawMenu refuses a week without it
       const dishes = await Promise.all(
         menu.selected.map(async (s) => {
           const { meal, base, variant } = locate(raw, menu, s.index);
           const recipe = meal?.recipe ?? {};
-          const read = await attempt(async () => projectRecipe(await client.getRecipe(recipeIdOf(meal, s.index, week)), 2));
+          const read = await attempt(async () => projectRecipe(await client.getRecipe(recipeIdOf(meal, s.index, week)), servings));
           const shipped = read.ok ? read.value.ingredients.filter((i) => !i.notInBox).map((i) => i.name) : [];
           const dish = variant ?? base;
           return {
             index: s.index,
             name: recipe.name,
             quantity: s.quantity,
+            ...(s.quantity > 1
+              ? {
+                  dinners: s.quantity,
+                  quantityNote: `Picked ${s.quantity}× this week: this covers ${s.quantity} dinners (cook it on ${s.quantity} nights, or once at ${s.quantity}× the amounts).`,
+                }
+              : {}),
             ...(variant ? { swapOf: s.baseIndex } : {}),
             category: dish?.category ?? recipe.category ?? null,
             seafoodKind: dish?.seafoodKind ?? null,

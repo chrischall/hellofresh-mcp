@@ -71,11 +71,13 @@ means the browser may be signed out: same remedy.
   delivery date, why, time and key ingredients.
 
 Reads take `view`: `compact` (default) is enough to decide; ask for `full` only
-for a field compact leaves out. A `price` with `source: "hellofresh"` is
-HelloFresh's own checkout total in dollars (voucher, shipping, tax applied); it
-leaves premium meals out, so quote `totalWithPremiums` (premiums are in
-`premiumUpcharge`). `source: "estimate"` is a local fallback in cents — say it
-is an estimate, and why (`reason`).
+for a field compact leaves out. Every `price` amount is in US dollars, whatever
+its source. `source: "hellofresh"` is HelloFresh's own checkout total (voucher,
+shipping, tax applied); `source: "estimate"` is a local fallback — say it is an
+estimate, and why (`reason`). In both, `grandTotal` leaves premium meals out, so
+quote `totalWithPremiums` (premiums are in `premiumUpcharge`). If the browser
+bridge is down, the calculator is tried once per call and every week falls back
+to the estimate with the same `reason`.
 
 ## Planner profiles
 

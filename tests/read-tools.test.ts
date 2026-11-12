@@ -4,7 +4,9 @@ import { createTestHarness, parseToolResult, type TestHarness } from '@chrischal
 import type { CallToolResult } from '@modelcontextprotocol/server';
 import { HelloFreshClient, type ClientSession } from '../src/client.js';
 import { registerReadTools } from '../src/tools/reads.js';
-import { boxNumbering } from '../src/tools/shared.js';
+import { McpToolError, withCallSignal } from '@chrischall/mcp-utils';
+import { HelloFreshBridgeError } from '../src/session.js';
+import { attempt, boxNumbering, calculatorGate } from '../src/tools/shared.js';
 import type { ToolDeps } from '../src/tools/index.js';
 import { offlineDeps } from './helpers.js';
 
@@ -96,6 +98,16 @@ async function call(name: string, args: Record<string, unknown> = {}, routes: Ro
   harness = await createTestHarness((server) => registerReadTools(server, deps));
   const result = await harness.callTool(name, args);
   return { result, urls, tabBodies, text: textOf(result) };
+}
+
+/** A price exposes ONE unit: US dollars, never a *Cents field, every amount at most 2 decimals. */
+function expectDollars(price: Record<string, unknown>) {
+  for (const [key, value] of Object.entries(price)) {
+    expect(key, key).not.toMatch(/cents/i);
+    if (typeof value === 'number' && key !== 'boxNumber' && key !== 'couponPercent') {
+      expect(Math.round(value * 100) / 100, key).toBe(value);
+    }
+  }
 }
 
 const textOf = (r: CallToolResult) => (r.content as { text: string }[])[0]!.text;
@@ -253,13 +265,19 @@ describe('hf_list_deliveries', () => {
       source: 'estimate',
       reason: expect.stringMatching(/price calculator could not be used \(.*404.*\), so this is a local estimate/),
       boxNumber: 2,
-      subtotalCents: 16047,
-      discountCents: 2212,
-      totalCents: 13835,
+      currency: 'USD',
+      subTotal: 160.47,
+      discount: 22.12,
+      grandTotal: 138.35,
+      premiumUpcharge: 0,
+      totalWithPremiums: 138.35,
     });
+    expectDollars(w49.price);
     expect(out.deliveries[0].price).toBeUndefined();
     expect(out.deliveries[2].price).toBeUndefined();
     expect(out.priceNote).toMatch(/premium/);
+    expect(out.priceNote).toMatch(/US dollars, for both sources/);
+    expect(out.priceNote).not.toMatch(/cents/i);
     expect(out.priceNote).toMatch(/next_box_number/);
     // The fixture subscription does not say whether its first box was delivered.
     expect(out.priceNote).toMatch(/does not say whether the first box was delivered.*ASSUMES.*box 2/);
@@ -268,9 +286,9 @@ describe('hf_list_deliveries', () => {
   it('next_box_number moves the voucher rule; a box past the voucher is flagged', async () => {
     const first = parseToolResult<Any>((await call('hf_list_deliveries', { next_box_number: 1 })).result);
     // Box 1: 65 % of product + fee + shipping (applicable_to both) = round(16047 × 0.65) = 10431.
-    expect(first.deliveries[1].price).toMatchObject({ source: 'estimate', boxNumber: 1, discountCents: 10431, totalCents: 5616 });
+    expect(first.deliveries[1].price).toMatchObject({ source: 'estimate', boxNumber: 1, discount: 104.31, grandTotal: 56.16, totalWithPremiums: 56.16 });
     const late = parseToolResult<Any>((await call('hf_list_deliveries', { next_box_number: 60 })).result);
-    expect(late.deliveries[1].price).toMatchObject({ boxNumber: 60, discountCents: 0 });
+    expect(late.deliveries[1].price).toMatchObject({ boxNumber: 60, discount: 0 });
     expect(late.deliveries[1].price.warning).toMatch(/boxes 1–52/);
   });
 
@@ -296,7 +314,7 @@ describe('hf_list_deliveries', () => {
       ['2026-W52', 3],
     ]);
     // Box 1: 65 % of product + fee + shipping.
-    expect(out.deliveries[0].price).toMatchObject({ discountCents: 10431 });
+    expect(out.deliveries[0].price).toMatchObject({ discount: 104.31 });
     expect(out.priceNote).toMatch(/first box is not delivered yet.*box 1/);
     expect(out.priceNote).not.toMatch(/assum/i);
     // hf_get_delivery numbers the same way.
@@ -326,8 +344,91 @@ describe('hf_list_deliveries', () => {
     const w49 = parseToolResult<Any>(result).deliveries[1];
     expect(w49.allowedActions).toEqual(['mealSwap', 'pause', 'oneOffChange', 'updateDeliveryWeekday']);
     expect(w49.oneOffDaySlots).toHaveLength(2);
-    expect(w49.price).toMatchObject({ source: 'estimate', estimate: true, productCents: 14748, feeCents: 1299, boxNumber: 2 });
+    expect(w49.price).toMatchObject({ source: 'estimate', product: 147.48, fees: 12.99, boxNumber: 2, currency: 'USD' });
+    expect(w49.price.estimate).toBeUndefined();
+    expectDollars(w49.price);
     expect(text).not.toMatch(/Example St|ORDER-SYNTHETIC|tracking/);
+  });
+});
+
+describe('calculatorGate: one tool call’s calculator attempts', () => {
+  const ok = async () => 1;
+
+  it('after a bridge/transport failure, later weeks skip the calculator with the same reason', async () => {
+    for (const down of [
+      new McpToolError('Could not reach HelloFresh: socket hang up', { kind: 'transport' }),
+      new McpToolError('HelloFresh did not answer POST in time (30000 ms).', { kind: 'timeout' }),
+      new HelloFreshBridgeError('Could not read the HelloFresh session from the browser: tab closed', new Error('x')),
+      Object.assign(new Error('bridge offline'), { name: 'FetchproxyBridgeOffline' }),
+    ]) {
+      const gate = calculatorGate();
+      const run = vi.fn(ok);
+      const first = await gate(() => Promise.reject(down));
+      expect(first).toEqual({ ok: false, reason: down.message });
+      expect(await gate(run)).toEqual({ ok: false, reason: down.message });
+      expect(run).not.toHaveBeenCalled();
+    }
+  });
+
+  it('an HTTP answer from HelloFresh (4xx) is not a bridge failure: the next week still tries', async () => {
+    const gate = calculatorGate();
+    const http = new McpToolError('HelloFresh POST /calculate failed: HTTP 404', { kind: 'http', status: 404 });
+    expect(await gate(() => Promise.reject(http))).toMatchObject({ ok: false });
+    expect(await gate(() => Promise.reject(new McpToolError('no customer id'))) ).toMatchObject({ ok: false });
+    expect(await gate(ok)).toEqual({ ok: true, value: 1 });
+  });
+
+  it('concurrent weeks wait for the first attempt, so a down bridge is tried once', async () => {
+    const gate = calculatorGate();
+    let release!: () => void;
+    const tried = vi.fn(() => new Promise<never>((_, reject) => {
+      release = () => reject(new McpToolError('bridge down', { kind: 'transport' }));
+    }));
+    const all = Promise.all([gate(tried), gate(tried), gate(tried)]);
+    await vi.waitFor(() => expect(tried).toHaveBeenCalledTimes(1));
+    release();
+    expect((await all).map((r) => r.ok)).toEqual([false, false, false]);
+    expect(tried).toHaveBeenCalledTimes(1);
+  });
+
+  it('a cancelled call propagates the abort instead of falling back', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled by caller'));
+    const gate = calculatorGate();
+    await expect(withCallSignal(controller.signal, () => gate(() => Promise.reject(new Error('cancelled by caller'))))).rejects.toThrow(
+      'cancelled by caller',
+    );
+    await expect(withCallSignal(controller.signal, () => attempt(() => Promise.reject(new Error('cancelled by caller'))))).rejects.toThrow(
+      'cancelled by caller',
+    );
+  });
+});
+
+describe('a down bridge fails fast within one call', () => {
+  const BRIDGE_DOWN: Route = [
+    /\/gw\/calculate$/,
+    () => {
+      throw new Error('bridge socket closed');
+    },
+  ];
+  const weeks = ['2026-W49', '2026-W51', '2026-W52', '2026-W53'].map((id, i) => ({
+    ...W49,
+    id,
+    deliveryDate: new Date(Date.parse('2026-11-30T05:00:00Z') + i * 7 * 86_400_000).toISOString(),
+  }));
+
+  it('hf_list_deliveries: the calculator is tried once; every running week gets the estimate with the same reason', async () => {
+    const { result, tabBodies } = await call('hf_list_deliveries', {}, [BRIDGE_DOWN, [/deliveries$/, { items: weeks }]]);
+    expect(tabBodies).toHaveLength(1);
+    const prices = parseToolResult<Any>(result).deliveries.map((d: Any) => d.price);
+    expect(prices.map((p: Any) => p.source)).toEqual(['estimate', 'estimate', 'estimate', 'estimate']);
+    expect(new Set(prices.map((p: Any) => p.reason)).size).toBe(1);
+    expect(prices[0].reason).toMatch(/bridge socket closed/);
+  });
+
+  it('an HTTP 404 from the calculator is not a bridge failure: every week still asks HelloFresh', async () => {
+    const { tabBodies } = await call('hf_list_deliveries', {}, [[/deliveries$/, { items: weeks }]]);
+    expect(tabBodies).toHaveLength(4);
   });
 });
 
@@ -354,6 +455,9 @@ describe('real box prices (HelloFresh’s calculator, in-tab)', () => {
       totalWithPremiums: 52.65,
       note: expect.stringMatching(/leaves premium recipe charges out/),
     });
+    expectDollars(out.deliveries[1].price);
+    expect(out.priceNote).toMatch(/US dollars/);
+    expect(out.priceNote).not.toMatch(/cents/i);
     expect(out.deliveries[0].price).toBeUndefined();
     expect(out.deliveries[2].price).toBeUndefined();
     expect(out.priceNote).toMatch(/"hellofresh" is HelloFresh’s own checkout price/);
@@ -486,7 +590,7 @@ describe('hf_get_delivery', () => {
       { index: 67, quantity: 1, name: 'Pesto Shrimp Linguine with Lemony Panko Topping' },
       { index: 71, quantity: 1, name: 'Chesapeake Tilapia & Corn Chowder' },
     ]);
-    expect(out.price).toMatchObject({ source: 'estimate', boxNumber: 2, subtotalCents: 16047, discountCents: 2212, totalCents: 13835 });
+    expect(out.price).toMatchObject({ source: 'estimate', boxNumber: 2, subTotal: 160.47, discount: 22.12, totalWithPremiums: 138.35 });
     expect(out.price.reason).toMatch(/404/);
   });
 
@@ -498,7 +602,21 @@ describe('hf_get_delivery', () => {
     ]);
     const out = parseToolResult<Any>(result);
     expect(out.selection.find((s: Any) => s.index === 47)).toMatchObject({ premiumBoxCents: 8994 });
-    expect(out.price).toMatchObject({ source: 'estimate', boxNumber: 3, premiumCents: 8994, subtotalCents: 16047 + 8994 });
+    expect(out.price).toMatchObject({
+      source: 'estimate',
+      boxNumber: 3,
+      currency: 'USD',
+      product: 147.48,
+      fees: 12.99,
+      shipping: 0,
+      subTotal: 160.47,
+      premiumUpcharge: 89.94,
+      // Box 3: 15 % of the product only (2212 cents).
+      discount: 22.12,
+      grandTotal: 138.35,
+      totalWithPremiums: 228.29,
+    });
+    expectDollars(out.price);
     expect(out.allowedActions).toBeDefined();
   });
 
@@ -526,13 +644,13 @@ describe('hf_get_delivery', () => {
   it('a week outside the upcoming list: estimate undiscounted, saying why', async () => {
     const { result } = await call('hf_get_delivery', { week: '2026-W49' }, [[/deliveries$/, { count: 0 }]]);
     const out = parseToolResult<Any>(result);
-    expect(out.price.discountCents).toBe(0);
+    expect(out.price.discount).toBe(0);
     expect(out.price.warning).toMatch(/box number/);
   });
 
   it('next_box_number shifts the derived box number', async () => {
     const out = parseToolResult<Any>((await call('hf_get_delivery', { week: '2026-W49', next_box_number: 1 })).result);
-    expect(out.price).toMatchObject({ boxNumber: 1, discountCents: 10431 });
+    expect(out.price).toMatchObject({ boxNumber: 1, discount: 104.31 });
   });
 
   it('an unknown box number and an unreadable menu: both reasons are given', async () => {

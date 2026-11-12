@@ -27,13 +27,13 @@ import { shiftWeek } from '../weeks.js';
 import type { HelloFreshClient } from '../client.js';
 import { foodMeta } from './hints.js';
 import {
-  attempt,
   boxNumbering,
   boxNumbers,
-  compactEstimate,
+  calculatorGate,
   compactSelection,
   dateOf,
   estimateFor,
+  estimateInDollars,
   hellofreshPrice,
   isUnresizableFirstBox,
   loadAccount,
@@ -44,6 +44,7 @@ import {
   readPicks,
   weekParam,
   type Account,
+  type CalculatorGate,
 } from './shared.js';
 import type { ToolDeps } from './index.js';
 
@@ -267,6 +268,7 @@ async function weeklyPlan(
   profile: Profile,
   args: WeeklyPlanArgs,
   now: number,
+  gate: CalculatorGate,
   alsoAvoid: readonly string[] = [],
 ) {
   const { week } = args;
@@ -302,7 +304,7 @@ async function weeklyPlan(
   const locked = lockedReason(delivery, week, now);
 
   // HelloFresh's own price for the box the plan needs, with the picks; else the local estimate.
-  const real = await attempt(() =>
+  const real = await gate(() =>
     hellofreshPrice(
       client,
       account,
@@ -331,7 +333,7 @@ async function weeklyPlan(
           price: {
             source: 'estimate' as const,
             reason: `${why}, so this is a local estimate.`,
-            ...compactEstimate(estimate),
+            ...estimateInDollars(estimate, false),
             ...(estimate.voucher ? { voucher: estimate.voucher.code } : {}),
             priceFrom: local.priceFrom,
           },
@@ -505,7 +507,7 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
       const profile = profileFor(args.profile);
       const account = await loadAccount(client);
       const delivery = projectDelivery(await client.getDelivery(account.subscriptionId, args.week));
-      return minifiedResult((await weeklyPlan(client, account, delivery, profile, args, now())).result);
+      return minifiedResult((await weeklyPlan(client, account, delivery, profile, args, now(), calculatorGate())).result);
     },
   );
   server.registerTool(
@@ -539,6 +541,7 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
       // Every profile resolves before any HelloFresh call.
       const requested = ordered.map((w) => ({ ...w, resolved: profileFor(w.profile) }));
       const account = await loadAccount(client);
+      const gate = calculatorGate(); // one per call: a down bridge is tried once, not per week
       const planned: string[] = [];
       const weeks: Array<Record<string, unknown>> = [];
       const lines: string[] = [];
@@ -560,7 +563,7 @@ export function registerPlannerTools(server: McpServer, deps: ToolDeps): void {
           continue;
         }
         const avoid = [...planned];
-        const one = await weeklyPlan(client, account, delivery, resolved, { week, profile }, now(), avoid);
+        const one = await weeklyPlan(client, account, delivery, resolved, { week, profile }, now(), gate, avoid);
         const picks = (one.result.picks as Array<{ name?: string }>).map((p) => p.name).filter((n): n is string => !!n);
         planned.push(...picks);
         weeks.push({ ...one.result, ...(avoid.length > 0 ? { avoidedFromEarlierWeeks: avoid } : {}) });

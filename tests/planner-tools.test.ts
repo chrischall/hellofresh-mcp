@@ -325,9 +325,12 @@ describe('hf_weekly_plan', () => {
       source: 'estimate',
       reason: expect.stringMatching(/price calculator could not be used \(.*404.*\), so this is a local estimate/),
       boxNumber: 2,
-      subtotalCents: 16047,
-      discountCents: 2212,
-      totalCents: 13835,
+      currency: 'USD',
+      subTotal: 160.47,
+      discount: 22.12,
+      grandTotal: 138.35,
+      premiumUpcharge: 0,
+      totalWithPremiums: 138.35,
       voucher: 'EXAMPLE65',
       priceFrom: 'this week',
     });
@@ -354,7 +357,14 @@ describe('hf_weekly_plan', () => {
       why: '2026-W49 is US-CBU-2-6-0; the couple profile needs US-CBU-2-2-0.',
     });
     const premiums = out.picks.reduce((sum: number, p: Any) => sum + (p.premiumBoxCents ?? 0), 0);
-    expect(out.price).toMatchObject({ subtotalCents: 5996 + 1299 + premiums, discountCents: 899, priceFrom: '2026-W50 (same box size)' });
+    expect(out.price).toMatchObject({
+      subTotal: 72.95,
+      discount: 8.99,
+      premiumUpcharge: premiums / 100,
+      totalWithPremiums: (5996 + 1299 - 899 + premiums) / 100,
+      priceFrom: '2026-W50 (same box size)',
+    });
+    for (const key of Object.keys(out.price)) expect(key).not.toMatch(/cents/i);
     expect(out.summary).toMatch(/^Couple week \(2 servings\) — delivering Mon 11\/30: .+ \+ .+\. Est\. box total \$\d+\.\d\d \(−\$8\.99 EXAMPLE65\)\.$/);
   });
 
@@ -415,7 +425,7 @@ describe('hf_weekly_plan', () => {
     expect(out.followUp.map((f: Any) => f.tool)).toEqual(['hf_unskip_week', 'hf_set_week_size', 'hf_select_meals']);
     expect(out.followUp[0]).toEqual({ tool: 'hf_unskip_week', arguments: { week: '2026-W50' }, why: '2026-W50 is skipped.' });
     // No upcoming 6-person week: the plan's own unit price.
-    expect(out.price).toMatchObject({ boxNumber: 2, subtotalCents: 14748 + 1299, priceFrom: 'the plan price' });
+    expect(out.price).toMatchObject({ boxNumber: 2, subTotal: 160.47, priceFrom: 'the plan price' });
   });
 
   it('no price for the needed size → no estimate, said plainly', async () => {
@@ -430,11 +440,11 @@ describe('hf_weekly_plan', () => {
   it('a week outside the upcoming list: undiscounted unless box_number is given', async () => {
     const routes: Route[] = [[/deliveries$/, { count: 0 }]];
     const plain = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, routes);
-    expect(plain.out.price.discountCents).toBe(0);
+    expect(plain.out.price.discount).toBe(0);
     expect(plain.out.price.warning).toMatch(/box number/);
     expect(plain.out.summary).toMatch(/\(no voucher discount\)\.$/);
     const numbered = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0, box_number: 1 }, routes);
-    expect(numbered.out.price).toMatchObject({ boxNumber: 1, discountCents: Math.round((14748 + 1299) * 0.65) });
+    expect(numbered.out.price).toMatchObject({ boxNumber: 1, discount: Math.round((14748 + 1299) * 0.65) / 100 });
   });
 
   it('next_box_number shifts the voucher’s box', async () => {
@@ -452,7 +462,7 @@ describe('hf_weekly_plan', () => {
       [/\/delivery_dates\/2026-W51$/, W51],
     ];
     const w49 = await call('hf_weekly_plan', { week: '2026-W49', profile: 'family', avoid_recent_weeks: 0 }, routes);
-    expect(w49.out.price).toMatchObject({ boxNumber: 1, discountCents: Math.round((14748 + 1299) * 0.65) });
+    expect(w49.out.price).toMatchObject({ boxNumber: 1, discount: Math.round((14748 + 1299) * 0.65) / 100 });
     expect(w49.out.boxNumberNote).toMatch(/first box is not delivered yet/);
     // W50 is skipped, so W51 is box 2 …
     const w51 = await call('hf_weekly_plan', { week: '2026-W51', profile: 'family', avoid_recent_weeks: 0 }, routes);
@@ -578,6 +588,29 @@ describe('hf_plan_weeks', () => {
   /** W50 as a running 2 × 2 week (the fixture has it skipped). */
   const W50_RUNNING: Route = [/\/delivery_dates\/2026-W50$/, { ...W50, status: 'RUNNING' }];
   const names = (week: Any) => week.picks.map((p: Any) => p.name);
+
+  it('a down bridge is tried once across the weeks: later weeks use the estimate with the same reason, in dollars', async () => {
+    const bridgeDown: Route = [
+      /\/gw\/calculate$/,
+      () => {
+        throw new Error('bridge socket closed');
+      },
+    ];
+    const { out, tabBodies } = await call(
+      'hf_plan_weeks',
+      { weeks: [{ week: '2026-W49', profile: 'family' }, { week: '2026-W50', profile: 'family' }] },
+      [W50_RUNNING, bridgeDown],
+    );
+    expect(tabBodies).toHaveLength(1);
+    const [a, b] = out.weeks;
+    expect([a.price.source, b.price.source]).toEqual(['estimate', 'estimate']);
+    expect(a.price.reason).toMatch(/bridge socket closed/);
+    expect(b.price.reason).toBe(a.price.reason);
+    for (const p of [a.price, b.price]) {
+      for (const key of Object.keys(p)) expect(key).not.toMatch(/cents/i);
+      expect(p.currency).toBe('USD');
+    }
+  });
 
   it('plans each week in week order exactly as hf_weekly_plan, never repeating a recipe planned for an earlier week', async () => {
     const { out, urls } = await call(

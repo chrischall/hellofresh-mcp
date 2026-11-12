@@ -166,6 +166,26 @@ describe('hf_get_recipe', () => {
     expect(out.recipe.name).toBe('Pesto Salmon Linguine');
   });
 
+  it('a protein swap without a title falls back to the variant’s recipe name, never "undefined"', async () => {
+    const untitled = (drop: (r: Any) => void) => {
+      const menu = structuredClone(MENU);
+      for (const mod of menu.modularity) for (const v of mod.variations ?? []) if (v.index === 558) delete v.title;
+      for (const meal of menu.meals) if (meal.index === 558) drop(meal.recipe);
+      return menu;
+    };
+    const named = parseToolResult<Any>((await call('hf_get_recipe', { week: '2026-W49', index: 558 }, [[/\/my-deliveries\/menu$/, untitled(() => {})]])).result);
+    const recipeName = MENU.meals.find((m: Any) => m.index === 558).recipe.name;
+    expect(named.swap.protein).toBeUndefined();
+    expect(named.swap.note).toBe(`Protein swap of #67 Pesto Shrimp Linguine with Lemony Panko Topping: swaps in ${recipeName}.`);
+    expect(JSON.stringify(named)).not.toMatch(/undefined/);
+
+    const bare = parseToolResult<Any>(
+      (await call('hf_get_recipe', { week: '2026-W49', index: 558 }, [[/\/my-deliveries\/menu$/, untitled((r) => delete r.name)]])).result,
+    );
+    expect(bare.swap.note).toBe('Protein swap of #67 Pesto Shrimp Linguine with Lemony Panko Topping.');
+    expect(JSON.stringify(bare)).not.toMatch(/undefined/);
+  });
+
   it('a meal picked twice notes that the amounts double', async () => {
     const { result } = await call('hf_get_recipe', { week: '2026-W49', index: 67 }, [[/\/my-deliveries\/menu$/, menuSelecting({ 67: 2 })]]);
     expect(parseToolResult<Any>(result).quantityNote).toMatch(/picked 2×/);
@@ -235,6 +255,17 @@ describe('hf_cooking_plan', () => {
     expect(steakShrimp.why).toMatch(/shorter total time first/);
     expect(out.dishes[3].cardLink).toBeUndefined();
     expect(out.dishes[5].day).toBe('Sat');
+  });
+
+  it('a meal picked twice says it covers two dinners', async () => {
+    const { result } = await call('hf_cooking_plan', { week: '2026-W49' }, [[/\/my-deliveries\/menu$/, menuSelecting({ 71: 2, 67: 1 })]]);
+    const out = parseToolResult<Any>(result);
+    const tilapia = out.dishes.find((d: Any) => d.index === 71);
+    expect(tilapia).toMatchObject({ quantity: 2, dinners: 2 });
+    expect(tilapia.quantityNote).toMatch(/picked 2×.*covers 2 dinners/i);
+    const shrimp = out.dishes.find((d: Any) => d.index === 67);
+    expect(shrimp.dinners).toBeUndefined();
+    expect(shrimp.quantityNote).toBeUndefined();
   });
 
   it('a skipped week has no plan', async () => {

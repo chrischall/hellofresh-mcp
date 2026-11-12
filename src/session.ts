@@ -16,9 +16,16 @@
 //     (never trusting the rejected token again) and retries the call once.
 //  5. When the browser cookie read FAILS (bridge down, tab closed, pairing
 //     pending) but the newest set this process knows is one it refreshed
-//     itself, and that set's refresh token has not expired, it is used
-//     instead of failing — refreshed (and written back) as in 3 when stale. A
-//     set read from the browser is never a fallback: its refresh token may
+//     itself, it may stand in — how far depends on its write-back:
+//     - the write-back FAILED: the browser never received that refresh token,
+//       so only this process can have spent it. While it has not expired it
+//       is used, refreshed (and written back) as in 3 when stale.
+//     - the write-back SUCCEEDED: the browser holds that refresh token and
+//       may already have rotated it (POSTing a spent one can sign the browser
+//       out). Only its ACCESS token is used, while still valid (and not
+//       rejected); otherwise the original bridge error is rethrown, its
+//       pairing hint intact. /gw/refresh is never called.
+//     A set read from the browser is never a fallback: its refresh token may
 //     already be spent by the browser. A missing cookie (signed out) is NOT a
 //     read failure and still fails.
 //
@@ -204,6 +211,8 @@ export class HelloFreshSession implements ReactiveTokenSource {
   private writeBackWarning: string | undefined;
   /** The refresh token of this process's own latest refresh (the fallback when the cookie read fails). */
   private ownRefreshToken: string | undefined;
+  /** Whether that refresh was written back to the browser (which may then rotate it on its own). */
+  private ownWrittenBack = false;
   private readonly seen: string[] = [];
 
   constructor(private readonly opts: HelloFreshSessionOptions) {
@@ -287,7 +296,9 @@ export class HelloFreshSession implements ReactiveTokenSource {
       raw = await this.bridged(() => this.opts.bridge.readAuthCookie());
     } catch (err) {
       const ours = this.latest;
-      if (!ours || ours.refresh_token !== this.ownRefreshToken || !this.refreshable(ours)) throw err;
+      if (!ours || ours.refresh_token !== this.ownRefreshToken) throw err;
+      // Written back: the browser may have rotated (spent) its refresh token — use the access token only.
+      if (this.ownWrittenBack ? !this.fresh(ours) : !this.refreshable(ours)) throw err;
       console.error(
         `[hellofresh-mcp] could not read the browser session (${truncateErrorMessage(this.redact(messageOf(err)), 200)}); using this process's own refreshed session`,
       );
@@ -315,9 +326,11 @@ export class HelloFreshSession implements ReactiveTokenSource {
     const next = await this.refresh(newest);
     this.latest = next;
     this.ownRefreshToken = next.refresh_token;
+    this.ownWrittenBack = false;
     this.remember(next);
     try {
       await this.opts.bridge.writeAuthCookie(encodeAuthCookie(next));
+      this.ownWrittenBack = true;
       this.writeBackWarning = undefined;
     } catch (err) {
       this.writeBackWarning = WRITE_BACK_WARNING;

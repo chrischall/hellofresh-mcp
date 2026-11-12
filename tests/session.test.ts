@@ -321,16 +321,33 @@ describe('HelloFreshSession token lifecycle', () => {
       return { h, bodies, read };
     }
 
-    it('refreshes from its OWN rotated token set instead of failing, and still writes the new set back', async () => {
+    /** A write-back that lands once and then fails (the browser never receives the later set). */
+    const failingWrites = (ok: number) => {
+      let writes = 0;
+      return async () => {
+        writes++;
+        if (writes > ok) throw new Error('extension offline');
+      };
+    };
+
+    it('write-back FAILED: refreshes from its OWN rotated token set (the browser never got it) and writes the new set back', async () => {
       const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const { h, bodies, read } = refreshedThenBridgeDown();
+      const writes: string[] = [];
+      let n = 0;
+      const { h, bodies, read } = refreshedThenBridgeDown({
+        write: async (value) => {
+          n++;
+          if (n === 1) throw new Error('extension offline');
+          writes.push(value);
+        },
+      });
       await expect(h.session.getToken()).resolves.toBe('access-1');
+      expect(h.session.warning()).toBe(WRITE_BACK_WARNING);
       read.fail = true;
       h.clock.now = NOW_MS + 1800 * 1000;
       await expect(h.session.getToken()).resolves.toBe('access-2');
       expect(bodies.map((b) => JSON.parse(b).refresh_token)).toEqual(['refresh-RRR', 'refresh-1']);
-      expect(h.bridge.writeAuthCookie).toHaveBeenCalledTimes(2);
-      expect(decodeAuthCookie(h.bridge.writeAuthCookie.mock.calls[1]![0] as string).refresh_token).toBe('refresh-2');
+      expect(decodeAuthCookie(writes[0]!).refresh_token).toBe('refresh-2');
       expect(h.session.warning()).toBeUndefined();
       const logged = errors.mock.calls.flat().join(' ');
       expect(logged).toMatch(/could not read the browser session/);
@@ -338,26 +355,78 @@ describe('HelloFreshSession token lifecycle', () => {
       errors.mockRestore();
     });
 
-    it('a 401 replay while the bridge is down refreshes past the rejected token from our own set', async () => {
+    it('write-back FAILED: a 401 replay while the bridge is down refreshes past the rejected token from our own set', async () => {
       vi.spyOn(console, 'error').mockImplementation(() => {});
-      const { h, bodies, read } = refreshedThenBridgeDown();
+      const { h, bodies, read } = refreshedThenBridgeDown({ write: failingWrites(0) });
       const token = await h.session.getToken();
       read.fail = true;
       h.session.invalidate(token);
       await expect(h.session.getToken()).resolves.toBe('access-2');
       expect(bodies.map((b) => JSON.parse(b).refresh_token)).toEqual(['refresh-RRR', 'refresh-1']);
+      expect(h.session.warning()).toBe(WRITE_BACK_WARNING);
       vi.restoreAllMocks();
+    });
+
+    it('write-back SUCCEEDED, own token still valid: it is used, and the spent-maybe refresh token is never POSTed', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { h, read } = refreshedThenBridgeDown();
+      await expect(h.session.getToken()).resolves.toBe('access-1');
+      read.fail = true;
+      // Force the lifecycle to run again while access-1 is still valid (as a cache miss would).
+      (h.session as unknown as { source: { invalidate(): void } }).source.invalidate();
+      await expect(h.session.getToken()).resolves.toBe('access-1');
+      expect(h.fetchImpl).toHaveBeenCalledTimes(1);
+      vi.restoreAllMocks();
+    });
+
+    it('write-back SUCCEEDED, own token stale: the original bridge error surfaces and /gw/refresh is NOT called', async () => {
+      const { h, read } = refreshedThenBridgeDown();
+      await h.session.getToken();
+      read.fail = true;
+      h.clock.now = NOW_MS + 1800 * 1000;
+      const err = await h.session.getToken().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HelloFreshBridgeError);
+      expect((err as Error).message).toMatch(/tab closed/);
+      expect(h.fetchImpl).toHaveBeenCalledTimes(1);
+      expect(h.bridge.writeAuthCookie).toHaveBeenCalledTimes(1);
+    });
+
+    it('write-back SUCCEEDED, own token rejected (401): the bridge error surfaces, no refresh', async () => {
+      const { h, read } = refreshedThenBridgeDown();
+      const token = await h.session.getToken();
+      read.fail = true;
+      h.session.invalidate(token);
+      await expect(h.session.getToken()).rejects.toBeInstanceOf(HelloFreshBridgeError);
+      expect(h.fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it('write-back SUCCEEDED, then a pending pairing: the rethrown error keeps its approve-pair-code hint', async () => {
+      const bodies: string[] = [];
+      let fail = false;
+      const h = harness({
+        cookie: async () => {
+          if (fail) throw new Error('Pairing required. Pair code is: 1234-5678');
+          return cookieOf(tokenSet({ issued_at: NOW_S - 1800 }));
+        },
+        refresh: (body) => {
+          bodies.push(body);
+          return refreshed();
+        },
+        write: async () => {},
+      });
+      await h.session.getToken();
+      fail = true;
+      h.clock.now = NOW_MS + 1800 * 1000;
+      const err = (await h.session.getToken().catch((e: unknown) => e)) as HelloFreshBridgeError;
+      expect(err).toBeInstanceOf(HelloFreshBridgeError);
+      expect(err.message).toMatch(/pairing is pending/);
+      expect(err.hint).toMatch(/approve pair code 1234-5678/);
+      expect(bodies).toHaveLength(1);
     });
 
     it('a failed write-back on that refresh still returns the new token and warns', async () => {
       vi.spyOn(console, 'error').mockImplementation(() => {});
-      let writes = 0;
-      const { h, read } = refreshedThenBridgeDown({
-        write: async () => {
-          writes++;
-          if (writes > 1) throw new Error('extension offline');
-        },
-      });
+      const { h, read } = refreshedThenBridgeDown({ write: failingWrites(0) });
       await h.session.getToken();
       read.fail = true;
       h.clock.now = NOW_MS + 1800 * 1000;
@@ -366,8 +435,9 @@ describe('HelloFreshSession token lifecycle', () => {
       vi.restoreAllMocks();
     });
 
-    it('an expired refresh token is not used: the bridge error surfaces', async () => {
-      const { h, read } = refreshedThenBridgeDown();
+    it('write-back FAILED but the refresh token expired: the bridge error surfaces', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { h, read } = refreshedThenBridgeDown({ write: failingWrites(0) });
       await h.session.getToken();
       read.fail = true;
       // refreshed() keeps refresh_expires_in 5_184_000 s from issued_at NOW_S + 1.
@@ -375,11 +445,16 @@ describe('HelloFreshSession token lifecycle', () => {
       const err = await h.session.getToken().catch((e: unknown) => e);
       expect(err).toBeInstanceOf(HelloFreshBridgeError);
       expect(h.fetchImpl).toHaveBeenCalledTimes(1);
+      vi.restoreAllMocks();
     });
 
-    it('a refresh token with no stated lifetime is tried', async () => {
+    it('write-back FAILED: a refresh token with no stated lifetime is tried', async () => {
       vi.spyOn(console, 'error').mockImplementation(() => {});
-      const { h, read } = refreshedThenBridgeDown({ cookie: { refresh_expires_in: undefined }, refresh: { refresh_expires_in: undefined } });
+      const { h, read } = refreshedThenBridgeDown({
+        cookie: { refresh_expires_in: undefined },
+        refresh: { refresh_expires_in: undefined },
+        write: failingWrites(0),
+      });
       await h.session.getToken();
       read.fail = true;
       h.clock.now = NOW_MS + 1800 * 1000;

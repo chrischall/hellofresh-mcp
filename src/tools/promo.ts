@@ -17,6 +17,7 @@ import {
   boxNumbering,
   boxNumbers,
   byWeek,
+  calculatorGate,
   dateOf,
   hellofreshPrice,
   loadAccount,
@@ -76,6 +77,7 @@ export function registerPromoTools(server: McpServer, deps: ToolDeps): void {
       const numbers = boxNumbers(deliveries, numbering.next);
       const runningWeeks = deliveries.filter((d): d is ProjectedDelivery & { week: string } => d.status === 'running' && !!d.week);
 
+      const gate = calculatorGate();
       const perWeek: PerWeek[] = await mapWithConcurrency(runningWeeks, PRICE_CONCURRENCY, async (d): Promise<PerWeek> => {
         // Every running week is numbered (boxNumbers numbers exactly these).
         const boxNumber = numbers.get(d.week)!;
@@ -87,7 +89,7 @@ export function registerPromoTools(server: McpServer, deps: ToolDeps): void {
         };
         // The calculator is sent the week's picks, as the site does; an unreadable menu sends none.
         const menu = await attempt(() => readMenu(client, account, d, d.week));
-        const priced = await attempt(() =>
+        const priced = await gate(() =>
           hellofreshPrice(
             client,
             account,

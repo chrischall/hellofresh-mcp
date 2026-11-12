@@ -24,8 +24,10 @@ import {
   PRICE_CONCURRENCY,
   attempt,
   type Account,
+  type CalculatorGate,
   boxNumbering,
   boxNumbers,
+  calculatorGate,
   briefLine,
   byWeek,
   compactSelection,
@@ -173,8 +175,9 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
     selection: SelectedMeal[] | undefined,
     full: boolean,
     fallbackBoxNumber: () => Promise<number | undefined>,
+    gate: CalculatorGate,
   ) {
-    const real = await attempt(() =>
+    const real = await gate(() =>
       hellofreshPrice(
         client,
         account,
@@ -236,11 +239,12 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
       const numbers = boxNumbers(deliveries, numbering.next);
       const full = view === 'full';
       const running = deliveries.filter((d): d is ProjectedDelivery & { week: string } => d.status === 'running' && !!d.week);
+      const gate = calculatorGate();
       const priced = new Map(
         await mapWithConcurrency(running, PRICE_CONCURRENCY, async (d) => {
           const menu = await attempt(() => readMenu(client, account, d, d.week));
           const selection = menu.ok ? menu.value.selected : undefined;
-          const price = await priceWeek(account, d, d.week, selection, full, async () => numbers.get(d.week));
+          const price = await priceWeek(account, d, d.week, selection, full, async () => numbers.get(d.week), gate);
           return [d.week, price] as const;
         }),
       );
@@ -254,9 +258,10 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
         ...(priced.size > 0
           ? {
               priceNote:
-                'price.source "hellofresh" is HelloFresh’s own checkout price (US dollars; premium upcharges reported ' +
-                'separately and added in totalWithPremiums); "estimate" is a local fallback in cents (product + fees + ' +
-                `shipping + premiums − voucher) used when the calculator could not be read.${anyEstimate ? ` ${numbering.note}` : ''}`,
+                'Every price amount is in US dollars, for both sources. price.source "hellofresh" is HelloFresh’s own ' +
+                'checkout price; "estimate" is a local fallback (product + fees + shipping − voucher) used when the ' +
+                'calculator could not be read. In both, grandTotal leaves premium recipe upcharges out, premiumUpcharge ' +
+                `reports them and totalWithPremiums adds them.${anyEstimate ? ` ${numbering.note}` : ''}`,
             }
           : {}),
       });
@@ -305,7 +310,7 @@ export function registerReadTools(server: McpServer, deps: ToolDeps): void {
         const upcoming = ((await client.listDeliveries()).items ?? []).map(projectDelivery);
         return boxNumbers(upcoming, numbering.next).get(week);
       };
-      const price = delivery.status === 'running' ? await priceWeek(account, delivery, week, selected, full, fallbackBoxNumber) : undefined;
+      const price = delivery.status === 'running' ? await priceWeek(account, delivery, week, selected, full, fallbackBoxNumber, calculatorGate()) : undefined;
 
       return minifiedResult({
         ...(full

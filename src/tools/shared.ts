@@ -4,7 +4,7 @@
 // box-number helpers, and the brief line.
 
 import { z } from 'zod';
-import { McpToolError, messageOf, viewParam, type View } from '@chrischall/mcp-utils';
+import { McpToolError, currentCallSignal, messageOf, viewParam, type View } from '@chrischall/mcp-utils';
 import type { BoxPrice, HelloFreshClient } from '../client.js';
 import {
   estimateBoxTotal,
@@ -19,6 +19,7 @@ import {
   type ProjectedMenu,
   type SelectedMeal,
 } from '../normalize.js';
+import { HelloFreshBridgeError } from '../session.js';
 import type { RawDeliveryMenu, RawSubscription } from '../types.js';
 import { WEEK_PATTERN } from '../weeks.js';
 
@@ -259,7 +260,7 @@ export function estimatedPrice(estimate: NumberedEstimate, reason: string, full:
   return {
     source: 'estimate' as const,
     reason: `HelloFresh’s price calculator could not be used (${reason}), so this is a local estimate.`,
-    ...(full ? estimate : compactEstimate(estimate)),
+    ...estimateInDollars(estimate, full),
   };
 }
 
@@ -361,13 +362,29 @@ export function estimateFor(
   return { boxNumber, ...estimateBoxTotal(delivery, selection, account.subscription.voucherInfo, boxNumber) };
 }
 
-/** The few estimate fields a compact answer keeps. */
-export function compactEstimate(e: NumberedEstimate) {
+/** Cents → US dollars (2 decimals). */
+const usd = (cents: number) => Math.round(cents) / 100;
+
+/**
+ * The estimate as a `price` shows it: US dollars, named as HelloFresh's own
+ * price is — so a caller reads ONE unit whatever the source. `subTotal` is
+ * product + fees + shipping before the voucher, `grandTotal` that less the
+ * discount (premiums excluded, as HelloFresh's calculator), `totalWithPremiums`
+ * adds the meals' `premiumUpcharge`. Compact keeps the totals; full adds the
+ * parts and the voucher rule applied.
+ */
+export function estimateInDollars(e: NumberedEstimate, full: boolean) {
+  const beforeDiscount = e.productCents + e.feeCents + e.shippingCents;
   return {
     ...(e.boxNumber !== undefined ? { boxNumber: e.boxNumber } : {}),
-    subtotalCents: e.subtotalCents,
-    discountCents: e.discountCents,
-    totalCents: e.totalCents,
+    currency: 'USD' as const,
+    ...(full ? { product: usd(e.productCents), fees: usd(e.feeCents), shipping: usd(e.shippingCents) } : {}),
+    subTotal: usd(beforeDiscount),
+    discount: usd(e.discountCents),
+    grandTotal: usd(beforeDiscount - e.discountCents),
+    premiumUpcharge: usd(e.premiumCents),
+    totalWithPremiums: usd(e.totalCents),
+    ...(full && e.voucher ? { voucher: e.voucher } : {}),
     ...(e.warning ? { warning: e.warning } : {}),
   };
 }
@@ -383,14 +400,61 @@ export function compactSelection(s: SelectedMeal) {
   };
 }
 
-/** A best-effort read: the value, or the reason it could not be read. */
-export async function attempt<T>(run: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; reason: string }> {
+export type Attempt<T> = { ok: true; value: T } | { ok: false; reason: string };
+
+/**
+ * A best-effort read: the value, or the reason it could not be read. A caller
+ * that cancelled is not a reason: its abort propagates.
+ */
+export async function attempt<T>(run: () => Promise<T>): Promise<Attempt<T>> {
   try {
     return { ok: true, value: await run() };
   } catch (err) {
+    if (currentCallSignal()?.aborted) throw err;
     return { ok: false, reason: messageOf(err) };
   }
 }
+
+/**
+ * Whether a failure is the transport/bridge (unreachable, timed out, the
+ * browser session unreadable) rather than HelloFresh answering — an HTTP 4xx
+ * or a missing input is not.
+ */
+export function isBridgeFailure(err: unknown): boolean {
+  if (err instanceof HelloFreshBridgeError) return true;
+  if (err instanceof McpToolError) return err.kind === 'transport' || err.kind === 'timeout';
+  // Duck-typed: a duplicated @fetchproxy package breaks instanceof.
+  return err instanceof Error && err.name.startsWith('Fetchproxy');
+}
+
+/**
+ * The calculator attempts of ONE tool call. The first attempt runs alone
+ * (concurrent weeks wait for it); once one fails because of the
+ * transport/bridge, every later week skips the calculator and gets that same
+ * reason at once, so a down bridge costs one failure (one timeout), not one
+ * per week. A cancelled call propagates (see `attempt`).
+ */
+export function calculatorGate() {
+  let down: string | undefined;
+  let first: Promise<unknown> | undefined;
+  return async function price<T>(run: () => Promise<T>): Promise<Attempt<T>> {
+    // Settled either way (it rejects only when the caller cancelled — then this call's own attempt rethrows too).
+    if (first) await Promise.allSettled([first]);
+    if (down !== undefined) return { ok: false, reason: down };
+    const tried = attempt(async () => {
+      try {
+        return await run();
+      } catch (err) {
+        if (isBridgeFailure(err)) down = messageOf(err);
+        throw err;
+      }
+    });
+    first ??= tried;
+    return tried;
+  };
+}
+
+export type CalculatorGate = ReturnType<typeof calculatorGate>;
 
 // ---- brief ----------------------------------------------------------------------------
 
