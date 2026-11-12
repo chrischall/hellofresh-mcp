@@ -90,6 +90,20 @@ If calls fail with "Not signed in to HelloFresh", sign in again at hellofresh.co
 | `MCP_CONFIRM_ELICITATION` | `on` | `off` never shows a confirmation prompt, so every client takes the `MCP_CONFIRM_MODE` path. Use it for clients that declare prompts but never render them. |
 | `HELLOFRESH_PROFILES` | unset | The meal-planner profiles as an inline JSON array (wins over the file). See [Planner profiles](#planner-profiles). |
 | `HELLOFRESH_PROFILES_FILE` | `~/.config/hellofresh-mcp/profiles.json` | A JSON file of planner profiles, read when it exists. With neither set, the built-in `couple` and `family` profiles apply. |
+| `HELLOFRESH_SESSION_FILE` | `~/.hellofresh-mcp/session.json` (under `MCP_DATA_DIR` when hosted) | Where the session is kept so it survives a restart. See [Session across restarts](#session-across-restarts). |
+| `HELLOFRESH_SESSION_CACHE` | on | `false` keeps the session in memory only. |
+
+### Session across restarts
+
+The server keeps the newest HelloFresh token set in `HELLOFRESH_SESSION_FILE`. It never stores your customer id or email, and the file is `0600`. A restart reuses that file.
+
+- **Browser reachable:** the browser's cookie is read as before. Whichever set is newer wins.
+- **Browser not reachable** (closed, or the bridge is down):
+  - A stored access token keeps working until it expires (about 30 minutes).
+  - A refresh this server made but could not write back to the browser can still be refreshed. Only this server holds that refresh token.
+  - Any other stored refresh token is never used without the browser. HelloFresh rotates refresh tokens, and the browser may already have spent it.
+
+Processes that share the file (Claude Desktop beside Claude Code, say) take a lock before refreshing. A process that refreshed first is reused rather than raced. A rejected refresh deletes the file.
 
 ### Planner profiles
 

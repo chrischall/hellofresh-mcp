@@ -68,12 +68,26 @@ env:
       ~/.config/hellofresh-mcp/profiles.json, read only when it exists). When
       hosted, the file must live under the persistent dataDir; otherwise use
       HELLOFRESH_PROFILES.
+  - name: HELLOFRESH_SESSION_FILE
+    required: false
+    help: >-
+      Where the HelloFresh session (token set, never the customer's id or
+      email) is kept so it survives a restart. Defaults to
+      .hellofresh-mcp/session.json under the persistent dataDir (MCP_DATA_DIR),
+      else under HOME.
+  - name: HELLOFRESH_SESSION_CACHE
+    required: false
+    help: >-
+      on (default) keeps the session on disk across restarts; false keeps it
+      in memory only, so every start reads it from the browser again.
 state:
   dataDir: true
   reason: >-
     keeps the fetchproxy identity under
     $HOME/.fetchproxy/identity/hellofresh-mcp.json so the browser pairing
-    survives restarts; without it every cold start asks the user to re-pair
+    survives restarts (without it every cold start asks the user to re-pair),
+    and the HelloFresh session under .hellofresh-mcp/session.json so a cold
+    start can reuse it while the browser is away
 # The server process dials only the HelloFresh API on www.hellofresh.com. The
 # apiV2Auth cookie is read and written only by the user's browser over the
 # bridge, never by this process.
