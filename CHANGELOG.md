@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/chrischall/hellofresh-mcp/compare/v0.4.0...v0.4.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **deps:** Bump @chrischall/mcp-utils from 3.8.1 to 3.9.0 in the production-dependencies group ([#10](https://github.com/chrischall/hellofresh-mcp/issues/10)) ([d84b4d4](https://github.com/chrischall/hellofresh-mcp/commit/d84b4d466304a9d8f6182e989b68e7d0aa67e8c2))
+
 ## [0.4.0](https://github.com/chrischall/hellofresh-mcp/compare/v0.3.0...v0.4.0) (2026-11-12)
 
 
